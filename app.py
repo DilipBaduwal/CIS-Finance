@@ -11,6 +11,7 @@ import streamlit as st
 from cis_fin.company_queries import (
     CompanyLookupError,
     export_document_chunks,
+    list_recent_documents,
 )
 from cis_fin.companies import register_detected_company
 from cis_fin.connectivity import check_database, check_qdrant, check_storage
@@ -28,6 +29,7 @@ from cis_fin.pipeline import (
     get_document_progress,
     process_document_pipeline,
 )
+from cis_fin.question_review import QuestionReviewError, edit_question_candidate
 from cis_fin.report_metadata import ReportMetadataError, suggest_report_metadata
 from cis_fin.settings import Settings
 from cis_fin.storage import ObjectStoreError, S3ObjectStore
@@ -404,6 +406,38 @@ if submitted:
             st.error(str(exc))
 
 last_document_id = st.session_state.get("last_ingested_document_id")
+try:
+    recent_documents = list_recent_documents(settings)
+except CompanyLookupError as exc:
+    recent_documents = []
+    st.error("Could not load saved documents for question review: {}".format(exc))
+
+if recent_documents:
+    recent_document_ids = [row[0] for row in recent_documents]
+    selected_index = (
+        recent_document_ids.index(last_document_id)
+        if last_document_id in recent_document_ids
+        else 0
+    )
+    selected_recent_document_id = st.selectbox(
+        "Choose a saved document to view or edit questions",
+        options=recent_document_ids,
+        index=selected_index,
+        format_func=lambda document_id: next(
+            "{} · {} · {} · {}".format(
+                row[2],
+                row[1],
+                row[3] or "year not set",
+                row[4],
+            )
+            for row in recent_documents
+            if row[0] == document_id
+        ),
+        key="saved_document_question_review",
+    )
+    last_document_id = selected_recent_document_id
+    st.session_state["last_ingested_document_id"] = last_document_id
+
 if last_document_id:
     st.subheader("Live processing progress")
     render_live_progress(settings, uuid.UUID(last_document_id))
@@ -428,5 +462,121 @@ if last_document_id:
                 "JSON includes company, sector, industry, source/page citations, chunks and any generated candidates. "
                 "Every candidate remains pending review; non-matching quotations are flagged invalid."
             )
+            candidates = [
+                (record, candidate)
+                for record in records
+                for candidate in record["question_candidates"]
+            ]
+            st.subheader("Review and edit generated questions")
+            st.caption(
+                "Edit the question or its quotation, then save. The app checks the quote against the original chunk. "
+                "Edits remain pending review and are never auto-approved."
+            )
+            edit_notice = st.session_state.pop("question_edit_notice", None)
+            if edit_notice:
+                level, message = edit_notice
+                getattr(st, level)(message)
+            review_filter = st.selectbox(
+                "Show candidates",
+                options=("All candidates", "Invalid quotations", "Quotes matching source", "Pending review"),
+                key="question_review_filter_" + last_document_id,
+            )
+            if review_filter == "Invalid quotations":
+                candidates = [
+                    item for item in candidates if item[1]["validation_status"] == "invalid"
+                ]
+            elif review_filter == "Quotes matching source":
+                candidates = [
+                    item for item in candidates if item[1]["validation_status"] != "invalid"
+                ]
+            elif review_filter == "Pending review":
+                candidates = [
+                    item for item in candidates if item[1]["review_status"] == "pending"
+                ]
+
+            if not candidates:
+                st.info("No question candidates match this filter yet.")
+            else:
+                candidate_ids = [candidate["question_id"] for _, candidate in candidates]
+                candidate_lookup = {
+                    candidate["question_id"]: (record, candidate)
+                    for record, candidate in candidates
+                }
+                selected_candidate_id = st.selectbox(
+                    "Question candidate",
+                    options=candidate_ids,
+                    format_func=lambda candidate_id: "{} · pages {}–{} · {}".format(
+                        "INVALID QUOTE"
+                        if candidate_lookup[candidate_id][1]["validation_status"] == "invalid"
+                        else "QUOTE MATCH",
+                        candidate_lookup[candidate_id][0]["page_start"],
+                        candidate_lookup[candidate_id][0]["page_end"],
+                        candidate_lookup[candidate_id][1]["question"][:100],
+                    ),
+                    key="question_review_candidate_" + last_document_id,
+                )
+                record, candidate = candidate_lookup[selected_candidate_id]
+                if candidate["validation_status"] == "invalid":
+                    st.warning(
+                        "The saved quotation did not match the source text. Edit the quotation below to an exact "
+                        "quote from this chunk; it will remain invalid until it matches."
+                    )
+                else:
+                    st.success("The quotation matches source text. The candidate still needs human review.")
+                st.markdown(
+                    "**Source pages:** {}–{} · **Chunk:** {}".format(
+                        record["page_start"],
+                        record["page_end"],
+                        record["chunk_index"],
+                    )
+                )
+                with st.expander("View original source chunk", expanded=True):
+                    st.text(record["chunk_text"])
+                if candidate["review_status"] != "pending":
+                    st.info(
+                        "This candidate is {} and is read-only here. Editing is limited to pending candidates "
+                        "so prior review decisions are preserved.".format(candidate["review_status"])
+                    )
+                else:
+                    with st.form("edit_question_" + selected_candidate_id):
+                        edited_question = st.text_area(
+                            "Question",
+                            value=candidate["question"],
+                            height=100,
+                            key="question_text_" + selected_candidate_id,
+                        )
+                        edited_quote = st.text_area(
+                            "Evidence quotation",
+                            value=candidate["evidence_quote"],
+                            height=100,
+                            key="evidence_quote_" + selected_candidate_id,
+                        )
+                        save_edit = st.form_submit_button("Save question and quotation")
+                    if save_edit:
+                        try:
+                            edit_result = edit_question_candidate(
+                                settings,
+                                uuid.UUID(selected_candidate_id),
+                                edited_question,
+                                edited_quote,
+                            )
+                            for key in (
+                                "question_text_" + selected_candidate_id,
+                                "evidence_quote_" + selected_candidate_id,
+                            ):
+                                st.session_state.pop(key, None)
+                            if edit_result.quote_matches_source:
+                                st.session_state["question_edit_notice"] = (
+                                    "success",
+                                    "Edit saved. The quotation matches the source; the question remains pending human review.",
+                                )
+                            else:
+                                st.session_state["question_edit_notice"] = (
+                                    "warning",
+                                    "Edit saved, but the quotation still does not match the source. It remains flagged invalid.",
+                                )
+                            st.rerun()
+                        except QuestionReviewError as exc:
+                            st.error(str(exc))
     except (CompanyLookupError, ValueError) as exc:
         st.error("Could not prepare the evidence export: {}".format(exc))

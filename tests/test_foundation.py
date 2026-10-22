@@ -42,6 +42,7 @@ from cis_fin.questions import (
     generate_document_questions,
 )
 from cis_fin.pipeline import PipelineResult, process_document_pipeline
+from cis_fin.question_review import QuestionReviewError, edit_question_candidate
 from cis_fin.vector_index import (
     EXPECTED_EMBEDDING_DIMENSIONS,
     OllamaEmbedder,
@@ -767,6 +768,125 @@ class VectorIndexTests(unittest.TestCase):
         self.assertEqual(result.indexed_records_missing_from_qdrant, 1)
         self.assertEqual(result.untracked_qdrant_points, 1)
         self.assertEqual(result.older_index_rows, 2)
+
+
+class QuestionReviewTests(unittest.TestCase):
+    class FakeCursor:
+        def __init__(self, row):
+            self.row = row
+            self.rowcount = 0
+            self.calls = []
+            self.last_row = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, query, parameters):
+            self.calls.append((query, parameters))
+            if "SELECT q.question_text" in query:
+                self.last_row = self.row
+            elif "SELECT 1 FROM chunk_question_evidence" in query:
+                self.last_row = None
+            elif "UPDATE questions" in query or "UPDATE chunk_question_evidence" in query:
+                self.rowcount = 1
+
+        def fetchone(self):
+            result = self.last_row
+            self.last_row = None
+            return result
+
+    class FakeConnection:
+        def __init__(self, row):
+            self.cursor_value = QuestionReviewTests.FakeCursor(row)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def cursor(self):
+            return self.cursor_value
+
+    @staticmethod
+    def _fake_psycopg(connection):
+        return type(
+            "FakePsycopg",
+            (),
+            {"connect": staticmethod(lambda *_args, **_kwargs: connection), "Error": Exception},
+        )
+
+    def test_edit_saves_exact_quote_and_keeps_candidate_pending(self):
+        question_id = uuid.uuid4()
+        connection = self.FakeConnection(
+            (
+                "Old question?",
+                "pending",
+                uuid.uuid4(),
+                "revenue grew",
+                uuid.uuid4(),
+                "Revenue grew 12 percent in the year.",
+            )
+        )
+        with patch.dict("sys.modules", {"psycopg": self._fake_psycopg(connection)}):
+            result = edit_question_candidate(
+                Settings.from_env({"DATABASE_URL": "postgresql://localhost/test"}),
+                question_id,
+                " How much did revenue grow ",
+                "Revenue   grew 12 percent",
+            )
+
+        self.assertEqual(result.validation_status, "needs_review")
+        self.assertTrue(result.quote_matches_source)
+        self.assertEqual(result.evidence_quote, "Revenue grew 12 percent")
+        update_call = next(call for call in connection.cursor_value.calls if "UPDATE questions" in call[0])
+        self.assertEqual(update_call[1][0], "How much did revenue grow")
+        self.assertEqual(update_call[1][2], "needs_review")
+        self.assertIn("review_status = 'pending'", update_call[0])
+        self.assertTrue(
+            any("question.candidate_edited" in call[0] for call in connection.cursor_value.calls)
+        )
+
+    def test_edit_with_unmatched_quote_stays_invalid(self):
+        connection = self.FakeConnection(
+            (
+                "Old question?",
+                "pending",
+                uuid.uuid4(),
+                "old quote",
+                uuid.uuid4(),
+                "Operating margin was 14 percent.",
+            )
+        )
+        with patch.dict("sys.modules", {"psycopg": self._fake_psycopg(connection)}):
+            result = edit_question_candidate(
+                Settings.from_env({"DATABASE_URL": "postgresql://localhost/test"}),
+                uuid.uuid4(),
+                "What is the cash balance?",
+                "Cash balance was 100 million.",
+            )
+
+        self.assertEqual(result.validation_status, "invalid")
+        self.assertFalse(result.quote_matches_source)
+        self.assertTrue(
+            any("question.candidate_edited" in call[0] for call in connection.cursor_value.calls)
+        )
+
+    def test_edit_rejects_candidates_already_reviewed(self):
+        connection = self.FakeConnection(
+            ("Approved question?", "approved", uuid.uuid4(), "quote", uuid.uuid4(), "Source quote.")
+        )
+        with patch.dict("sys.modules", {"psycopg": self._fake_psycopg(connection)}):
+            with self.assertRaisesRegex(QuestionReviewError, "already approved"):
+                edit_question_candidate(
+                    Settings.from_env({"DATABASE_URL": "postgresql://localhost/test"}),
+                    uuid.uuid4(),
+                    "Edited question?",
+                    "Source quote.",
+                )
 
 
 class AutomaticPipelineTests(unittest.TestCase):

@@ -38,6 +38,12 @@ The job honors the recorded retry backoff and five-attempt cap. If Qdrant accept
 
 Human review is still required to reject unsupported claims, inferential leaps, irrelevant questions, and incorrect AI-specific labels. Authentication, reviewer role enforcement, and the question approval UI are not implemented in this local development app.
 
+## In-app candidate editing
+
+After automatic processing, the Streamlit **Review and edit generated questions** section lets the researcher filter candidates, view the original chunk and page range, and edit a pending question or its quotation. Saving recomputes the normalized question hash and checks the quotation against the original chunk in the same PostgreSQL transaction as the edit and audit record. A matching quote remains `needs_review`; an unmatched quote remains `invalid`/`unsupported`. Edits do not approve a candidate. Previously approved or rejected candidates are read-only in this editor so review decisions are not silently overwritten. Each edit writes a content-hash-only audit event; raw question or source text is not added to the audit log.
+
+The app provides a saved-document selector populated from PostgreSQL, so candidates remain available to review after a browser refresh or Streamlit rerun.
+
 ## Embedding and Qdrant consistency
 
 The default `nomic-embed-text:latest` model returns 768-dimensional vectors. The client checks that output dimension before indexing. Qdrant receives chunk/document/company IDs and original page-range metadata; PostgreSQL remains the source of truth and the embedding registry links each point back to a chunk. The registry is staged before Qdrant upsert and marked indexed after the upsert succeeds. A keyword payload index on `document_id` supports per-document vector reconciliation.

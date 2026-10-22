@@ -11,6 +11,36 @@ class CompanyLookupError(Exception):
     """The shared company list could not be retrieved."""
 
 
+def list_recent_documents(settings: Settings, limit: int = 50) -> List[Tuple[str, str, str, str, str]]:
+    if not settings.database_url:
+        raise CompanyLookupError("Set DATABASE_URL in the local .env file.")
+    if not 1 <= limit <= 100:
+        raise CompanyLookupError("Document-list limit must be between 1 and 100.")
+    try:
+        import psycopg
+    except ImportError as exc:
+        raise CompanyLookupError("PostgreSQL driver is missing; install requirements.txt.") from exc
+    try:
+        with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=5) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT d.document_id::text, d.document_title, c.symbol,
+                           COALESCE(d.fiscal_year, ''), d.processing_status
+                    FROM documents d
+                    JOIN companies c ON c.company_id = d.company_id
+                    ORDER BY d.updated_at DESC, d.created_at DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                return list(cursor.fetchall())
+    except psycopg.Error as exc:
+        raise CompanyLookupError(
+            "Could not load recent documents ({}). Verify database read permissions.".format(type(exc).__name__)
+        ) from exc
+
+
 def list_active_companies(settings: Settings) -> List[Tuple[str, str, str, str, str]]:
     if not settings.database_url:
         raise CompanyLookupError("Set DATABASE_URL in the local .env file.")
