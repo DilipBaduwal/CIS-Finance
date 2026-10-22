@@ -14,7 +14,7 @@ from cis_fin.postgres import secure_postgres_dsn
 from cis_fin.settings import Settings
 
 
-PROMPT_VERSION = "grounded-questions-v1"
+PROMPT_VERSION = "grounded-questions-toe-v2"
 QUESTION_NAMESPACE = uuid.UUID("f26721b9-72f2-4a22-8e7b-87ca6e6471a5")
 MAX_QUESTIONS_PER_CHUNK = 3
 MAX_RESPONSE_BYTES = 1024 * 1024
