@@ -275,7 +275,7 @@ class PostgresVectorStore:
         limit: int,
     ) -> Sequence[VectorChunk]:
         try:
-            with self.psycopg.connect(self.dsn, connect_timeout=5) as connection:
+            with self.psycopg.connect(self.dsn, connect_timeout=20) as connection:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         """
@@ -322,7 +322,7 @@ class PostgresVectorStore:
 
     def count_pending(self, document_id: uuid.UUID, collection: str, model: str, version: str) -> int:
         try:
-            with self.psycopg.connect(self.dsn, connect_timeout=5) as connection:
+            with self.psycopg.connect(self.dsn, connect_timeout=20) as connection:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         """
@@ -344,7 +344,7 @@ class PostgresVectorStore:
 
     def stage(self, chunks: Sequence[VectorChunk], collection: str, model: str, version: str, dimensions: int) -> None:
         try:
-            with self.psycopg.connect(self.dsn, connect_timeout=5) as connection:
+            with self.psycopg.connect(self.dsn, connect_timeout=20) as connection:
                 with connection.cursor() as cursor:
                     for chunk in chunks:
                         embedding_id = uuid.uuid5(VECTOR_NAMESPACE, "registry:" + str(chunk.vector_id))
@@ -378,7 +378,7 @@ class PostgresVectorStore:
 
     def mark_indexed(self, chunks: Sequence[VectorChunk], collection: str, model: str, version: str) -> None:
         try:
-            with self.psycopg.connect(self.dsn, connect_timeout=5) as connection:
+            with self.psycopg.connect(self.dsn, connect_timeout=20) as connection:
                 with connection.cursor() as cursor:
                     for chunk in chunks:
                         cursor.execute(
@@ -410,7 +410,7 @@ class PostgresVectorStore:
         version: str,
     ) -> Tuple[set, int, int]:
         try:
-            with self.psycopg.connect(self.dsn, connect_timeout=5) as connection:
+            with self.psycopg.connect(self.dsn, connect_timeout=20) as connection:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         """
@@ -461,7 +461,7 @@ class PostgresVectorStore:
         indexed_count: int,
     ) -> None:
         try:
-            with self.psycopg.connect(self.dsn, connect_timeout=5) as connection:
+            with self.psycopg.connect(self.dsn, connect_timeout=20) as connection:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         """
