@@ -463,11 +463,13 @@ class QuestionGenerationTests(unittest.TestCase):
                         "question": "What operating margin was reported?",
                         "evidence_quote": "Operating margin was 14 percent.",
                         "ai_specific": False,
+                        "toe_dimension": "technology",
                     },
                     {
                         "question": "What was the company's cash balance?",
                         "evidence_quote": "The cash balance was 99 million.",
                         "ai_specific": False,
+                        "toe_dimension": "technology",
                     },
                 ]
             }
@@ -510,11 +512,13 @@ class QuestionGenerationTests(unittest.TestCase):
                         "question": "How much revenue was reported",
                         "evidence_quote": "Revenue increased to 25 million dollars.",
                         "ai_specific": False,
+                        "toe_dimension": "technology",
                     },
                     {
                         "question": "What was operating income",
                         "evidence_quote": "Operating income was 8 million.",
                         "ai_specific": False,
+                        "toe_dimension": "technology",
                     },
                 ]
             }
@@ -551,6 +555,7 @@ class QuestionGenerationTests(unittest.TestCase):
                                         "question": "What was reported?",
                                         "evidence_quote": "Sales were 10 million.",
                                         "ai_specific": False,
+                                        "toe_dimension": "technology",
                                     }
                                 ]
                             }

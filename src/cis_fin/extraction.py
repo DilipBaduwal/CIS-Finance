@@ -84,7 +84,7 @@ class PyMuPDFExtractor:
                     )
                 for page_index in range(first - 1, last):
                     page = document.load_page(page_index)
-                    yield PageText(page_index + 1, page.get_text("text", sort=True).strip())
+                    yield PageText(page_index + 1, page.get_text("text").strip())
         except ExtractionError:
             raise
         except (RuntimeError, ValueError, OSError) as exc:
