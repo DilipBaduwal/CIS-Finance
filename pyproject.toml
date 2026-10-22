@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools==75.6.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cis-fin-research-pipeline"
+version = "0.1.0"
+description = "Shared, evidence-grounded Nifty 50 research data pipeline"
+requires-python = ">=3.9"
+
+[project.scripts]
+cis-fin = "cis_fin.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
