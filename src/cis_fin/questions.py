@@ -5,7 +5,7 @@ import json
 import socket
 import uuid
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
@@ -448,6 +448,7 @@ def generate_document_questions(
     limit: int = 10,
     generator: Optional[OllamaQuestionGenerator] = None,
     store: Optional[PostgresQuestionStore] = None,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> GenerationResult:
     if not 1 <= limit <= 100:
         raise QuestionGenerationError("Question-generation limit must be between 1 and 100 chunks.")
@@ -461,7 +462,7 @@ def generate_document_questions(
     candidates_needing_review = 0
     invalid_candidates = 0
     chunks_skipped = 0
-    for chunk_id, chunk_text in chunks:
+    for chunk_number, (chunk_id, chunk_text) in enumerate(chunks, start=1):
         try:
             candidates = generator.generate(chunk_text)
         except QuestionGenerationError as exc:
@@ -474,12 +475,16 @@ def generate_document_questions(
                 # Terminal chunk-level model failure: checkpointed as skipped, so the next
                 # batch can proceed without blocking the rest of the document.
                 chunks_skipped += 1
+                if progress_callback:
+                    progress_callback(chunk_number, len(chunks))
                 continue
             raise
         store.save_candidates(chunk_id, candidates, generator.model)
         candidates_created += len(candidates)
         candidates_needing_review += sum(candidate.quote_matches_source for candidate in candidates)
         invalid_candidates += sum(not candidate.quote_matches_source for candidate in candidates)
+        if progress_callback:
+            progress_callback(chunk_number, len(chunks))
     return GenerationResult(
         chunks_processed=len(chunks),
         candidates_created=candidates_created,

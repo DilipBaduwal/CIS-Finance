@@ -322,6 +322,9 @@ def process_document_pipeline(
     """Run all bounded post-extraction stages; each stage is idempotent and checkpointed."""
     job_store = PipelineJobStore(settings)
     document_id = job_store.claim(job_id)
+    initial_progress = get_document_progress(settings, document_id)
+    checkpoint_baseline = initial_progress.question_checkpoints
+    total_chunks = initial_progress.chunk_count
     questions_processed = 0
     candidates_created = 0
     candidates_needing_review = 0
@@ -330,8 +333,23 @@ def process_document_pipeline(
     try:
         if progress_callback:
             progress_callback("Generating grounded questions in batches of 10…")
+            progress_callback("QUESTION_PROGRESS|{}|{}".format(checkpoint_baseline, total_chunks))
         while True:
-            result = generate_document_questions(settings, document_id, limit=10)
+            result = generate_document_questions(
+                settings,
+                document_id,
+                limit=10,
+                progress_callback=(
+                    lambda completed, _batch_size: progress_callback(
+                        "QUESTION_PROGRESS|{}|{}".format(
+                            min(total_chunks, checkpoint_baseline + questions_processed + completed),
+                            total_chunks,
+                        )
+                    )
+                    if progress_callback
+                    else None
+                ),
+            )
             questions_processed += result.chunks_processed
             candidates_created += result.candidates_created
             candidates_needing_review += result.candidates_needing_review

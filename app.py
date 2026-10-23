@@ -40,6 +40,25 @@ from cis_fin.storage import ObjectStoreError, S3ObjectStore
 st.set_page_config(page_title="CIS-FIN Research Pipeline", page_icon="📚", layout="wide")
 
 
+def run_pipeline_with_ui_progress(current_settings, job_id, status_container):
+    question_bar = st.progress(0, text="Question generation: waiting for the first chunk…")
+
+    def report(message):
+        if message.startswith("QUESTION_PROGRESS|"):
+            _, completed_text, total_text = message.split("|", 2)
+            completed, total = int(completed_text), int(total_text)
+            if total:
+                question_bar.progress(
+                    min(completed / total, 1.0),
+                    text="Question generation: {} / {} chunks checkpointed".format(completed, total),
+                )
+            status_container.update(label="Generating grounded questions…", state="running")
+        else:
+            status_container.update(label=message, state="running")
+
+    return process_document_pipeline(current_settings, job_id, progress_callback=report)
+
+
 @st.fragment(run_every="10s")
 def render_live_progress(current_settings, document_id):
     try:
@@ -65,11 +84,11 @@ def render_live_progress(current_settings, document_id):
             if st.button("Resume saved job in Streamlit", key="resume_job_" + str(progress.job_id)):
                 try:
                     with st.spinner("Resuming saved question generation and indexing…"):
-                        result = process_document_pipeline(
-                            current_settings,
-                            progress.job_id,
-                            progress_callback=lambda message: st.write(message),
+                        resume_status = st.status("Resuming saved processing job…", expanded=True)
+                        result = run_pipeline_with_ui_progress(
+                            current_settings, progress.job_id, resume_status
                         )
+                        resume_status.update(label="Saved processing job completed", state="complete")
                     st.success(
                         "Resumed job: processed {} question chunks and indexed {} chunks.".format(
                             result.chunks_processed_for_questions,
@@ -421,13 +440,9 @@ if submitted:
                     )
                 if not result.duplicate or (
                     result.existing_stage in ("chunked", "questions", "embedded", "indexed")
-                    and result.existing_status in ("queued", "retry_wait", "running")
+                    and result.existing_status in ("queued", "retry_wait")
                 ):
-                    pipeline_result = process_document_pipeline(
-                        settings,
-                        result.job_id,
-                        progress_callback=lambda message: progress.update(label=message, state="running"),
-                    )
+                    pipeline_result = run_pipeline_with_ui_progress(settings, result.job_id, progress)
             if result.duplicate:
                 progress.update(label="Existing document processing checked", state="complete")
                 if pipeline_result is None:
