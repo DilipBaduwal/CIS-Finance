@@ -1,6 +1,3 @@
-
-
-
 """Local, evidence-grounded question candidate generation."""
 
 import hashlib
@@ -21,6 +18,7 @@ PROMPT_VERSION = "grounded-questions-toe-v3"
 QUESTION_NAMESPACE = uuid.UUID("f26721b9-72f2-4a22-8e7b-87ca6e6471a5")
 MAX_QUESTIONS_PER_CHUNK = 3
 MAX_RESPONSE_BYTES = 1024 * 1024
+GENERATION_FAILURE_LIMIT = 2
 TOE_DIMENSIONS = ("technology", "organization", "environment")
 
 QUESTION_FORMAT = {
@@ -106,7 +104,7 @@ class OllamaQuestionGenerator:
         self,
         base_url: str = "http://127.0.0.1:11434",
         model: str = "qwen2.5:3b",
-        timeout_seconds: int = 180,
+        timeout_seconds: int = 60,
     ) -> None:
         parsed = urlsplit(base_url)
         if (
@@ -133,14 +131,16 @@ class OllamaQuestionGenerator:
     def generate(self, chunk_text: str) -> List[QuestionCandidate]:
         if not chunk_text.strip():
             raise QuestionGenerationError("Cannot generate questions from an empty chunk.")
-        for attempt in range(2):
-            payload = self._request(chunk_text, repair=attempt == 1)
+        last_error = None
+        for attempt in range(GENERATION_FAILURE_LIMIT):
             try:
+                payload = self._request(chunk_text, repair=attempt == 1)
                 return self._parse_candidates(payload, chunk_text)
-            except QuestionGenerationError:
-                if attempt == 1:
-                    raise
-        raise QuestionGenerationError("Ollama returned invalid question output after one repair attempt.")
+            except QuestionGenerationError as exc:
+                last_error = exc
+        raise QuestionGenerationError(
+            "Question generation failed twice for this chunk: {}".format(last_error)
+        ) from last_error
 
     def _request(self, chunk_text: str, repair: bool) -> dict:
         messages = [
@@ -319,8 +319,12 @@ class PostgresQuestionStore:
                 )
             ) from exc
 
-    def record_generation_failure(self, chunk_id: uuid.UUID, model: str, error: Exception) -> int:
+    def record_generation_failure(
+        self, chunk_id: uuid.UUID, model: str, error: Exception, attempt_increment: int = 1
+    ) -> int:
         """Persist a model/validation failure count; return the new attempt count."""
+        if not 1 <= attempt_increment <= GENERATION_FAILURE_LIMIT:
+            raise QuestionGenerationError("Invalid question-generation failure count.")
         try:
             with self.psycopg.connect(self.dsn, connect_timeout=20) as connection:
                 with connection.cursor() as cursor:
@@ -328,16 +332,16 @@ class PostgresQuestionStore:
                         """
                         INSERT INTO question_generation_checkpoints (
                             chunk_id, generation_model, prompt_version, status, attempt_count, last_error
-                        ) VALUES (%s, %s, %s, 'failed', 1, %s)
+                        ) VALUES (%s, %s, %s, 'failed', %s, %s)
                         ON CONFLICT (chunk_id, generation_model, prompt_version) DO UPDATE
-                        SET attempt_count = question_generation_checkpoints.attempt_count + 1,
-                            status = CASE WHEN question_generation_checkpoints.attempt_count + 1 >= 2
+                        SET attempt_count = question_generation_checkpoints.attempt_count + EXCLUDED.attempt_count,
+                            status = CASE WHEN question_generation_checkpoints.attempt_count + EXCLUDED.attempt_count >= %s
                                 THEN 'skipped' ELSE 'failed' END,
                             last_error = EXCLUDED.last_error,
                             attempted_at = now()
                         RETURNING attempt_count
                         """,
-                        (chunk_id, model, PROMPT_VERSION, str(error)[:500]),
+                        (chunk_id, model, PROMPT_VERSION, attempt_increment, str(error)[:500], GENERATION_FAILURE_LIMIT),
                     )
                     return cursor.fetchone()[0]
         except self.psycopg.Error as exc:
@@ -453,7 +457,11 @@ def generate_document_questions(
         try:
             candidates = generator.generate(chunk_text)
         except QuestionGenerationError as exc:
-            attempts = store.record_generation_failure(chunk_id, generator.model, exc)
+            # generate() already performed both bounded Ollama calls. Persist both failures
+            # together so the chunk is skipped now rather than requiring a whole-job retry.
+            attempts = store.record_generation_failure(
+                chunk_id, generator.model, exc, GENERATION_FAILURE_LIMIT
+            )
             if attempts >= 2:
                 # Terminal chunk-level model failure: checkpointed as skipped, so the next
                 # batch can proceed without blocking the rest of the document.
