@@ -27,6 +27,7 @@ class PipelineResult:
 
 @dataclass(frozen=True)
 class DocumentProgress:
+    job_id: uuid.UUID
     job_status: str
     stage: str
     attempt_count: int
@@ -37,6 +38,7 @@ class DocumentProgress:
     invalid_candidate_count: int
     indexed_chunk_count: int
     document_status: str
+    lease_expires_at: Optional[object]
 
 
 class PipelineJobStore:
@@ -240,7 +242,8 @@ def get_document_progress(settings: Settings, document_id: uuid.UUID) -> Documen
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT j.status, j.stage, j.attempt_count, j.max_attempts, d.processing_status,
+                    SELECT j.job_id, j.status, j.stage, j.attempt_count, j.max_attempts, d.processing_status,
+                        j.lease_expires_at,
                         (SELECT count(*) FROM chunks ch WHERE ch.document_id = d.document_id),
                         (SELECT count(*) FROM question_generation_checkpoints cp
                          JOIN chunks ch ON ch.chunk_id = cp.chunk_id
@@ -277,16 +280,18 @@ def get_document_progress(settings: Settings, document_id: uuid.UUID) -> Documen
                         "No processing job was found for document {}.".format(document_id)
                     )
                 return DocumentProgress(
-                    job_status=row[0],
-                    stage=row[1],
-                    attempt_count=row[2],
-                    max_attempts=row[3],
-                    chunk_count=row[5],
-                    question_checkpoints=row[6],
-                    candidate_count=row[7],
-                    invalid_candidate_count=row[8],
-                    indexed_chunk_count=row[9],
-                    document_status=row[4],
+                    job_id=row[0],
+                    job_status=row[1],
+                    stage=row[2],
+                    attempt_count=row[3],
+                    max_attempts=row[4],
+                    document_status=row[5],
+                    lease_expires_at=row[6],
+                    chunk_count=row[7],
+                    question_checkpoints=row[8],
+                    candidate_count=row[9],
+                    invalid_candidate_count=row[10],
+                    indexed_chunk_count=row[11],
                 )
     except PipelineProcessingError:
         raise

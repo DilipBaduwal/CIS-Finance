@@ -332,7 +332,11 @@ class PostgresQuestionStore:
                         """
                         INSERT INTO question_generation_checkpoints (
                             chunk_id, generation_model, prompt_version, status, attempt_count, last_error
-                        ) VALUES (%s, %s, %s, 'failed', %s, %s)
+                        ) VALUES (
+                            %s, %s, %s,
+                            CASE WHEN %s >= %s THEN 'skipped' ELSE 'failed' END,
+                            %s, %s
+                        )
                         ON CONFLICT (chunk_id, generation_model, prompt_version) DO UPDATE
                         SET attempt_count = question_generation_checkpoints.attempt_count + EXCLUDED.attempt_count,
                             status = CASE WHEN question_generation_checkpoints.attempt_count + EXCLUDED.attempt_count >= %s
@@ -341,7 +345,11 @@ class PostgresQuestionStore:
                             attempted_at = now()
                         RETURNING attempt_count
                         """,
-                        (chunk_id, model, PROMPT_VERSION, attempt_increment, str(error)[:500], GENERATION_FAILURE_LIMIT),
+                        (
+                            chunk_id, model, PROMPT_VERSION,
+                            attempt_increment, GENERATION_FAILURE_LIMIT,
+                            attempt_increment, str(error)[:500], GENERATION_FAILURE_LIMIT,
+                        ),
                     )
                     return cursor.fetchone()[0]
         except self.psycopg.Error as exc:

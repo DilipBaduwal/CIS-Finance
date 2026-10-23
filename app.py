@@ -4,6 +4,7 @@ import hashlib
 import tempfile
 import uuid
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
@@ -47,7 +48,7 @@ def render_live_progress(current_settings, document_id):
         st.error("Could not refresh processing progress: {}".format(exc))
         return
     st.write(
-        "Job **{}** · stage **{}** · status **{}** · attempt {}/{}".format(
+        "Document **{}** · stage **{}** · database status **{}** · attempt {}/{}".format(
             str(document_id)[:8],
             progress.stage,
             progress.job_status,
@@ -55,6 +56,29 @@ def render_live_progress(current_settings, document_id):
             progress.max_attempts,
         )
     )
+    if progress.lease_expires_at:
+        st.caption("Worker lease expires at {} UTC.".format(progress.lease_expires_at.isoformat()))
+        if progress.job_status == "running" and progress.lease_expires_at <= datetime.now(timezone.utc):
+            st.warning(
+                "The worker lease expired. If no other worker is running, resume the saved job here."
+            )
+            if st.button("Resume saved job in Streamlit", key="resume_job_" + str(progress.job_id)):
+                try:
+                    with st.spinner("Resuming saved question generation and indexing…"):
+                        result = process_document_pipeline(
+                            current_settings,
+                            progress.job_id,
+                            progress_callback=lambda message: st.write(message),
+                        )
+                    st.success(
+                        "Resumed job: processed {} question chunks and indexed {} chunks.".format(
+                            result.chunks_processed_for_questions,
+                            result.newly_indexed_chunks,
+                        )
+                    )
+                    st.rerun()
+                except PipelineProcessingError as exc:
+                    st.error("Could not resume saved job: {}".format(exc))
     if progress.chunk_count:
         st.progress(
             min(progress.question_checkpoints / progress.chunk_count, 1.0),
@@ -82,7 +106,9 @@ def render_live_progress(current_settings, document_id):
         st.warning("A stage failed and is waiting for its configured retry backoff.")
     elif progress.job_status == "failed":
         st.error("The job reached its retry limit and needs owner review.")
-    elif progress.job_status == "running":
+    elif progress.job_status == "running" and (
+        not progress.lease_expires_at or progress.lease_expires_at > datetime.now(timezone.utc)
+    ):
         st.info("Processing is active. This panel refreshes automatically every 10 seconds.")
 
 
@@ -395,7 +421,7 @@ if submitted:
                     )
                 if not result.duplicate or (
                     result.existing_stage in ("chunked", "questions", "embedded", "indexed")
-                    and result.existing_status in ("queued", "retry_wait")
+                    and result.existing_status in ("queued", "retry_wait", "running")
                 ):
                     pipeline_result = process_document_pipeline(
                         settings,
