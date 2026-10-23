@@ -91,6 +91,7 @@ def register_detected_company(
     sector: str,
     industry: str,
     profile_source: str,
+    official_exchange_lookup: bool = False,
 ) -> tuple:
     """Create a pending-review company profile from user-confirmed PDF suggestions."""
     if not settings.database_url:
@@ -152,6 +153,41 @@ def register_detected_company(
                         ),
                     )
                     return company_id, True
+                if official_exchange_lookup:
+                    cursor.execute(
+                        """
+                        UPDATE companies
+                        SET company_name = %s,
+                            sector = CASE WHEN %s THEN %s ELSE sector END,
+                            industry = CASE WHEN %s THEN %s ELSE industry END,
+                            profile_source = %s,
+                            updated_at = now()
+                        WHERE symbol = %s AND profile_status = 'pending_review'
+                        RETURNING company_id
+                        """,
+                        (
+                            name.strip(),
+                            not sector.strip().startswith("Unclassified"), sector.strip(),
+                            not industry.strip().startswith("Unclassified"), industry.strip(),
+                            profile_source.strip()[:500],
+                            normalized_symbol,
+                        ),
+                    )
+                    refreshed = cursor.fetchone()
+                    if refreshed:
+                        cursor.execute(
+                            """
+                            INSERT INTO audit_events (
+                                audit_id, actor_id, action, entity_type, entity_id, details
+                            ) VALUES (%s, NULL, 'company.official_classification_refreshed', 'company', %s, %s::jsonb)
+                            """,
+                            (
+                                uuid.uuid4(),
+                                refreshed[0],
+                                json.dumps({"symbol": normalized_symbol, "profile_source": profile_source.strip()[:500]}),
+                            ),
+                        )
+                        return refreshed[0], False
                 cursor.execute(
                     "SELECT company_id FROM companies WHERE symbol = %s",
                     (normalized_symbol,),

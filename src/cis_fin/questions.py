@@ -1,3 +1,6 @@
+
+
+
 """Local, evidence-grounded question candidate generation."""
 
 import hashlib
@@ -95,6 +98,7 @@ class GenerationResult:
     candidates_created: int
     candidates_needing_review: int
     invalid_candidates: int
+    chunks_skipped: int = 0
 
 
 class OllamaQuestionGenerator:
@@ -315,6 +319,34 @@ class PostgresQuestionStore:
                 )
             ) from exc
 
+    def record_generation_failure(self, chunk_id: uuid.UUID, model: str, error: Exception) -> int:
+        """Persist a model/validation failure count; return the new attempt count."""
+        try:
+            with self.psycopg.connect(self.dsn, connect_timeout=20) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        INSERT INTO question_generation_checkpoints (
+                            chunk_id, generation_model, prompt_version, status, attempt_count, last_error
+                        ) VALUES (%s, %s, %s, 'failed', 1, %s)
+                        ON CONFLICT (chunk_id, generation_model, prompt_version) DO UPDATE
+                        SET attempt_count = question_generation_checkpoints.attempt_count + 1,
+                            status = CASE WHEN question_generation_checkpoints.attempt_count + 1 >= 2
+                                THEN 'skipped' ELSE 'failed' END,
+                            last_error = EXCLUDED.last_error,
+                            attempted_at = now()
+                        RETURNING attempt_count
+                        """,
+                        (chunk_id, model, PROMPT_VERSION, str(error)[:500]),
+                    )
+                    return cursor.fetchone()[0]
+        except self.psycopg.Error as exc:
+            raise QuestionGenerationError(
+                "Could not save question-generation failure status ({}); the job must be retried safely.".format(
+                    type(exc).__name__
+                )
+            ) from exc
+
     def save_candidates(
         self,
         chunk_id: uuid.UUID,
@@ -380,7 +412,8 @@ class PostgresQuestionStore:
                         INSERT INTO question_generation_checkpoints (
                             chunk_id, generation_model, prompt_version, status
                         ) VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (chunk_id, generation_model, prompt_version) DO NOTHING
+                        ON CONFLICT (chunk_id, generation_model, prompt_version) DO UPDATE
+                        SET status = EXCLUDED.status, last_error = NULL, attempted_at = now()
                         """,
                         (
                             chunk_id,
@@ -415,8 +448,18 @@ def generate_document_questions(
     candidates_created = 0
     candidates_needing_review = 0
     invalid_candidates = 0
+    chunks_skipped = 0
     for chunk_id, chunk_text in chunks:
-        candidates = generator.generate(chunk_text)
+        try:
+            candidates = generator.generate(chunk_text)
+        except QuestionGenerationError as exc:
+            attempts = store.record_generation_failure(chunk_id, generator.model, exc)
+            if attempts >= 2:
+                # Terminal chunk-level model failure: checkpointed as skipped, so the next
+                # batch can proceed without blocking the rest of the document.
+                chunks_skipped += 1
+                continue
+            raise
         store.save_candidates(chunk_id, candidates, generator.model)
         candidates_created += len(candidates)
         candidates_needing_review += sum(candidate.quote_matches_source for candidate in candidates)
@@ -426,4 +469,5 @@ def generate_document_questions(
         candidates_created=candidates_created,
         candidates_needing_review=candidates_needing_review,
         invalid_candidates=invalid_candidates,
+        chunks_skipped=chunks_skipped,
     )

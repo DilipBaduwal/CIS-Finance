@@ -1,0 +1,105 @@
+diff --git a/src/cis_fin/questions.py b/src/cis_fin/questions.py
+index 5b500ce..94c0f3f 100644
+--- a/src/cis_fin/questions.py
++++ b/src/cis_fin/questions.py
+@@ -18,6 +18,7 @@ PROMPT_VERSION = "grounded-questions-v1"
+ QUESTION_NAMESPACE = uuid.UUID("f26721b9-72f2-4a22-8e7b-87ca6e6471a5")
+ MAX_QUESTIONS_PER_CHUNK = 3
+ MAX_RESPONSE_BYTES = 1024 * 1024
++TOE_DIMENSIONS = ("technology", "organization", "environment")
+ 
+ QUESTION_FORMAT = {
+     "type": "object",
+@@ -31,8 +32,12 @@ QUESTION_FORMAT = {
+                     "question": {"type": "string"},
+                     "evidence_quote": {"type": "string"},
+                     "ai_specific": {"type": "boolean"},
++                    "toe_dimension": {
++                        "type": "string",
++                        "enum": ["technology", "organization", "environment"],
++                    },
+                 },
+-                "required": ["question", "evidence_quote", "ai_specific"],
++                "required": ["question", "evidence_quote", "ai_specific", "toe_dimension"],
+                 "additionalProperties": False,
+             },
+         }
+@@ -64,6 +69,7 @@ class QuestionCandidate:
+     evidence_quote: str
+     ai_specific: bool
+     quote_matches_source: bool
++    toe_dimension: str
+ 
+ 
+ @dataclass(frozen=True)
+@@ -177,7 +183,8 @@ class OllamaQuestionGenerator:
+             for item in items:
+                 if (
+                     not isinstance(item, dict)
+-                    or set(item) != {"question", "evidence_quote", "ai_specific"}
++                    or set(item) != {"question", "evidence_quote", "ai_specific", "toe_dimension"}
++                    or item["toe_dimension"] not in TOE_DIMENSIONS
+                     or not isinstance(item["question"], str)
+                     or not isinstance(item["evidence_quote"], str)
+                     or not isinstance(item["ai_specific"], bool)
+@@ -197,6 +204,7 @@ class OllamaQuestionGenerator:
+                         question=question,
+                         evidence_quote=exact_quote if exact_quote is not None else quote,
+                         ai_specific=item["ai_specific"],
++                        toe_dimension=item["toe_dimension"],
+                         quote_matches_source=exact_quote is not None,
+                     )
+                 )
+@@ -320,9 +328,9 @@ class PostgresQuestionStore:
+                                 question_id,
+                                 candidate.question,
+                                 question_hash,
+-                                "financial_reporting",
+-                                "source_grounded",
+-                                "v1",
++                                "TOE",
++                                candidate.toe_dimension,
++                                "toe-v1",
+                                 model,
+                                 PROMPT_VERSION,
+                                 validation_status,
+diff --git a/tests/test_foundation.py b/tests/test_foundation.py
+index 7eca2ab..3c14e05 100644
+--- a/tests/test_foundation.py
++++ b/tests/test_foundation.py
+@@ -463,11 +463,13 @@ class QuestionGenerationTests(unittest.TestCase):
+                         "question": "What operating margin was reported?",
+                         "evidence_quote": "Operating margin was 14 percent.",
+                         "ai_specific": False,
++                        "toe_dimension": "technology",
+                     },
+                     {
+                         "question": "What was the company's cash balance?",
+                         "evidence_quote": "The cash balance was 99 million.",
+                         "ai_specific": False,
++                        "toe_dimension": "technology",
+                     },
+                 ]
+             }
+@@ -510,11 +512,13 @@ class QuestionGenerationTests(unittest.TestCase):
+                         "question": "How much revenue was reported",
+                         "evidence_quote": "Revenue increased to 25 million dollars.",
+                         "ai_specific": False,
++                        "toe_dimension": "technology",
+                     },
+                     {
+                         "question": "What was operating income",
+                         "evidence_quote": "Operating income was 8 million.",
+                         "ai_specific": False,
++                        "toe_dimension": "technology",
+                     },
+                 ]
+             }
+@@ -551,6 +555,7 @@ class QuestionGenerationTests(unittest.TestCase):
+                                         "question": "What was reported?",
+                                         "evidence_quote": "Sales were 10 million.",
+                                         "ai_specific": False,
++                                        "toe_dimension": "technology",
+                                     }
+                                 ]
+                             }

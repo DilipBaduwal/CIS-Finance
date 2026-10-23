@@ -31,6 +31,7 @@ from cis_fin.pipeline import (
 )
 from cis_fin.question_review import QuestionReviewError, edit_question_candidate
 from cis_fin.report_metadata import ReportMetadataError, suggest_report_metadata
+from cis_fin.nifty_lookup import NiftyLookupError, lookup_nifty50
 from cis_fin.settings import Settings
 from cis_fin.storage import ObjectStoreError, S3ObjectStore
 
@@ -165,6 +166,10 @@ if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
         st.caption("PDF contains {} pages.".format(inspected_page_count))
         if st.session_state.get("metadata_analysis_checksum") != upload_checksum:
             st.session_state["metadata_analysis_checksum"] = upload_checksum
+            st.session_state.pop("nifty_lookup_source", None)
+            st.session_state.pop("nse_classification_source", None)
+            st.session_state.pop("nifty_lookup_match", None)
+            st.session_state.pop("nifty_lookup_error", None)
             st.session_state["metadata_analysis_error"] = None
             try:
                 with tempfile.TemporaryDirectory(prefix="cis-fin-metadata-") as temp_dir:
@@ -197,6 +202,20 @@ if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
                     ),
                     "fiscal_year_input": metadata.fiscal_year,
                 }
+                # Verify/fill company fields from official exchange sources. This runs
+                # even when the model supplied values, since its classifications may be wrong.
+                if metadata.company_name:
+                    try:
+                        company = lookup_nifty50(metadata.company_name, metadata.ticker_symbol)
+                        detected["ticker_symbol_input"] = company.symbol
+                        # Do not retain an LLM guess when official classification is absent.
+                        detected["sector_input"] = company.sector
+                        detected["industry_input"] = company.industry
+                        st.session_state["nifty_lookup_source"] = company.source_url
+                        st.session_state["nse_classification_source"] = company.classification_source_url
+                        st.session_state["nifty_lookup_match"] = company.company_name
+                    except NiftyLookupError as exc:
+                        st.session_state["nifty_lookup_error"] = str(exc)
                 for key, value in detected.items():
                     st.session_state[key] = value
                 st.session_state["metadata_analysis_complete"] = True
@@ -218,6 +237,18 @@ elif uploaded_pdf and st.session_state.get("metadata_analysis_complete"):
         "Company and report details were suggested from the first four pages using local Ollama. "
         "Please review and correct them before submission. Sector and industry are suggestions, not verified classifications."
     )
+if uploaded_pdf and st.session_state.get("nifty_lookup_match"):
+    st.info(
+        "Verified {} against Nifty 50, then searched market-information pages for sector and industry. "
+        "Sources: Nifty constituents — {}; web classifications — {}. "
+        "Review the values before submitting.".format(
+            st.session_state["nifty_lookup_match"],
+            st.session_state["nifty_lookup_source"],
+            st.session_state.get("nse_classification_source") or "no Tavily result; add TAVILY_API_KEY to .env",
+        )
+    )
+elif uploaded_pdf and st.session_state.get("nifty_lookup_error"):
+    st.caption("Nifty lookup note: {}".format(st.session_state["nifty_lookup_error"]))
 
 if uploaded_pdf and inspected_page_count:
     page_widget_key = "{}:{}".format(uploaded_pdf.name, uploaded_pdf.size)
@@ -253,8 +284,8 @@ with st.form("pdf_ingestion_form", clear_on_submit=False):
     st.markdown("**Review the automatically detected details**")
     company_name = st.text_input("Company name", key="company_name_input")
     ticker_symbol = st.text_input("Ticker symbol", key="ticker_symbol_input")
-    sector = st.text_input("Sector (suggested)", key="sector_input")
-    industry = st.text_input("Industry (suggested)", key="industry_input")
+    sector = st.text_input("Sector (web search)", key="sector_input")
+    industry = st.text_input("Industry (web search)", key="industry_input")
     document_title = st.text_input("Document title", key="document_title_input")
     document_type = st.selectbox(
         "Document type",
@@ -283,8 +314,8 @@ if submitted:
         st.error("Choose a PDF before submitting.")
     elif uploaded_pdf.size <= 0:
         st.error("The uploaded PDF is empty.")
-    elif not all(value.strip() for value in (company_name, ticker_symbol, sector, industry, document_title)):
-        st.error("Confirm the detected company name, ticker, sector, industry, and document title.")
+    elif not all(value.strip() for value in (company_name, ticker_symbol, document_title)):
+        st.error("Confirm the company name, ticker symbol, and document title. Use the Nifty lookup if the ticker is missing.")
     elif not inspected_page_count:
         st.error("Upload a valid PDF so the page range can be checked.")
     elif selected_page_end < selected_page_start:
@@ -304,16 +335,25 @@ if submitted:
                     "Database schema is not current. Review `python -m cis_fin.cli migrate --dry-run`, "
                     "then apply migrations before uploading."
                 )
+            lookup_suffix = (
+                "; official Nifty lookup: {}; web classification sources: {}".format(
+                    st.session_state.get("nifty_lookup_source"),
+                    st.session_state.get("nse_classification_source") or "not available",
+                )
+                if st.session_state.get("nifty_lookup_match")
+                else ""
+            )
             company_id, company_created = register_detected_company(
                 settings,
                 ticker_symbol,
                 company_name,
-                sector,
-                industry,
+                sector.strip() or "Unclassified (requires review)",
+                industry.strip() or "Unclassified (requires review)",
                 "Auto-detected from PDF {} (SHA-256 {})".format(
                     uploaded_pdf.name,
                     upload_checksum,
-                ),
+                ) + lookup_suffix,
+                official_exchange_lookup=bool(st.session_state.get("nifty_lookup_match")),
             )
             with tempfile.TemporaryDirectory(prefix="cis-fin-upload-") as temp_dir:
                 pdf_path = Path(temp_dir) / "upload.pdf"
