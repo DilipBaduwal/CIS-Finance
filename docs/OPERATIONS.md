@@ -46,7 +46,13 @@ These metrics have not yet been measured for a representative sample. Do not imp
 
 ## Queue and concurrency
 
-The app processes one submitted document inline. Chunk, question, and embedding batches are bounded; model calls are sequential. `CIS_FIN_MAX_CONCURRENT_INGESTIONS` defaults to 2 and accepts 1–16, enforced through PostgreSQL job claims. There is no background scheduler for retry_wait jobs; after backoff, use the same upload (duplicate detection resumes downstream checkpoints) or `process-job --job-id`. Do not add a complex queue until measured load requires one.
+The app processes submitted documents inline. Chunk, question, and embedding batches are bounded; model calls are sequential. Set `CIS_FIN_MAX_CONCURRENT_INGESTIONS=5` for the initial five-person deployment (the value accepts 1–16), enforced through PostgreSQL job claims. Five people may be signed in and submit work, but local Ollama, PostgreSQL, Qdrant, CPU, GPU, and memory remain shared bottlenecks.
+
+Five local-development accounts are configured with `CIS_FIN_USER_1_USERNAME` / `CIS_FIN_USER_1_PASSWORD` through `CIS_FIN_USER_5_USERNAME` / `CIS_FIN_USER_5_PASSWORD`. Keep these values only in the private `.env` file. This is a lightweight app login, not a replacement for production identity management.
+
+The **Stop this job** action marks the job `cancelled` and clears its lease immediately. The active worker notices the request between question/indexing batches and stops without changing completed checkpoints. Uploading the identical PDF with the identical selected page range resumes from those checkpoints. A stop during one individual model or extraction call is cooperative, so that current call finishes first.
+
+The 30-minute lease is a crash-recovery safety bound, not a required wait time. It prevents a dead process from blocking a job forever. Normal stop and failure paths now clear the lease immediately; the 30-minute expiry is only the fallback when the process disappears without updating PostgreSQL. There is still no background scheduler for `retry_wait` jobs; after backoff, use the same upload or `process-job --job-id`.
 
 ## Recovery boundary
 

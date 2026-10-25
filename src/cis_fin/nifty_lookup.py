@@ -6,6 +6,7 @@ import json
 import os
 import re
 import unicodedata
+from pathlib import Path
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -29,6 +30,16 @@ class NiftyCompany:
     classification_source_url: str = ""
 
 
+# Temporary outage fallback for exact, unambiguous names. The official lookup
+# remains the primary source; these values only prevent a transient 502 from
+# leaving a known company without a ticker.
+KNOWN_TICKER_FALLBACKS = {
+    "tata steel": "TATASTEEL",
+}
+
+LOCAL_NIFTY500_PATH = Path(__file__).resolve().parents[2] / "data" / "nifty500.csv"
+
+
 def _normalize_name(value: str) -> str:
     value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
     value = re.sub(r"[^a-zA-Z0-9]+", " ", value).casefold()
@@ -37,6 +48,56 @@ def _normalize_name(value: str) -> str:
     while tokens and tokens[-1] in {"limited", "ltd", "company", "co", "corporation", "corp"}:
         tokens.pop()
     return " ".join(tokens)
+
+
+def fallback_ticker(company_name: str) -> str:
+    """Return a locally verified fallback ticker for an exact normalized name."""
+    return KNOWN_TICKER_FALLBACKS.get(_normalize_name(company_name), "")
+
+
+def lookup_local_nifty500(company_name: str = "", symbol: str = "") -> NiftyCompany:
+    """Match an exact company or symbol from the checked-in Nifty 500 snapshot."""
+    if not LOCAL_NIFTY500_PATH.exists():
+        raise NiftyLookupError("The local Nifty 500 reference file is not available.")
+    try:
+        with LOCAL_NIFTY500_PATH.open(newline="", encoding="utf-8-sig") as source:
+            rows = csv.DictReader(source)
+            wanted_name = _normalize_name(company_name)
+            wanted_symbol = symbol.strip().upper()
+            for row in rows:
+                row_name = (row.get("Company Name") or "").strip()
+                row_symbol = (row.get("Symbol") or "").strip().upper()
+                if (
+                    (wanted_name and _normalize_name(row_name) == wanted_name)
+                    or (wanted_symbol and row_symbol == wanted_symbol)
+                    or (wanted_name and wanted_name.replace(" ", "").upper() == row_symbol)
+                ):
+                    return NiftyCompany(
+                        company_name=row_name,
+                        symbol=row_symbol,
+                        industry=(row.get("Industry") or "").strip(),
+                    )
+    except (OSError, csv.Error) as exc:
+        raise NiftyLookupError("Could not read the local Nifty 500 reference file.") from exc
+    raise NiftyLookupError("No exact company-name or ticker match was found in the local Nifty 500 list.")
+
+
+def find_local_company_hint(text: str) -> NiftyCompany:
+    """Find a conservative company hint from a filename or short label."""
+    normalized = _normalize_name(text)
+    if not normalized:
+        raise NiftyLookupError("No company hint was provided.")
+    if not LOCAL_NIFTY500_PATH.exists():
+        raise NiftyLookupError("The local Nifty 500 reference file is not available.")
+    with LOCAL_NIFTY500_PATH.open(newline="", encoding="utf-8-sig") as source:
+        for row in csv.DictReader(source):
+            company = (row.get("Company Name") or "").strip()
+            company_tokens = _normalize_name(company).split()
+            if len(company_tokens) == 1 and company_tokens[0] in normalized.split():
+                return NiftyCompany(company, (row.get("Symbol") or "").strip().upper(), (row.get("Industry") or "").strip())
+            if len(company_tokens) > 1 and all(token in normalized.split() for token in company_tokens):
+                return NiftyCompany(company, (row.get("Symbol") or "").strip().upper(), (row.get("Industry") or "").strip())
+    raise NiftyLookupError("No company hint matched the local Nifty 500 list.")
 
 
 def parse_nifty50_csv(csv_text: str, company_name: str = "", symbol: str = "") -> NiftyCompany:

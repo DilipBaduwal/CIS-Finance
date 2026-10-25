@@ -136,6 +136,37 @@ class PipelineJobStore:
                 "Could not claim the downstream job ({}). Verify PostgreSQL access and retry.".format(type(exc).__name__)
             ) from exc
 
+    def cancellation_requested(self, job_id: uuid.UUID) -> bool:
+        with self.store._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT status FROM processing_jobs WHERE job_id = %s", (job_id,))
+                row = cursor.fetchone()
+                if not row:
+                    raise PipelineProcessingError("Processing job does not exist.")
+                return row[0] == "cancelled"
+
+    def cancel(self, job_id: uuid.UUID) -> None:
+        with self.store._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE processing_jobs
+                    SET status = 'cancelled', lease_owner = NULL, lease_expires_at = NULL,
+                        next_attempt_at = NULL, updated_at = now()
+                    WHERE job_id = %s AND status IN ('queued', 'running', 'retry_wait')
+                    """,
+                    (job_id,),
+                )
+                if cursor.rowcount != 1:
+                    raise PipelineProcessingError("Job is already complete or cannot be stopped.")
+                cursor.execute(
+                    """
+                    UPDATE documents SET processing_status = 'queued', updated_at = now()
+                    WHERE document_id = (SELECT document_id FROM processing_jobs WHERE job_id = %s)
+                    """,
+                    (job_id,),
+                )
+
 
     def checkpoint(self, job_id: uuid.UUID, stage: str) -> None:
         try:
@@ -335,6 +366,8 @@ def process_document_pipeline(
             progress_callback("Generating grounded questions in batches of 10…")
             progress_callback("QUESTION_PROGRESS|{}|{}".format(checkpoint_baseline, total_chunks))
         while True:
+            if job_store.cancellation_requested(job_id):
+                raise PipelineProcessingError("Job stopped by the researcher. Upload the same PDF and page range to resume it.")
             result = generate_document_questions(
                 settings,
                 document_id,
@@ -375,6 +408,8 @@ def process_document_pipeline(
                 else None
             ),
         )
+        if job_store.cancellation_requested(job_id):
+            raise PipelineProcessingError("Job stopped by the researcher. Upload the same PDF and page range to resume it.")
         job_store.checkpoint(job_id, "indexed")
         job_store.complete(job_id, document_id)
         if progress_callback:
@@ -387,6 +422,10 @@ def process_document_pipeline(
             newly_indexed_chunks=newly_indexed,
         )
     except Exception as exc:
+        if job_store.cancellation_requested(job_id):
+            raise PipelineProcessingError(
+                "Job stopped by the researcher. Upload the same PDF and page range to resume it."
+            ) from exc
         state, next_attempt_at = job_store.fail(job_id, document_id, exc)
         if state == "retry_wait":
             raise PipelineProcessingError(
@@ -398,3 +437,8 @@ def process_document_pipeline(
         raise PipelineProcessingError(
             "{} Job reached its retry limit and needs owner review.".format(_safe_pipeline_failure(exc)[1])
         ) from exc
+
+
+def cancel_document_job(settings: Settings, job_id: uuid.UUID) -> None:
+    """Request cancellation and release the lease immediately."""
+    PipelineJobStore(settings).cancel(job_id)

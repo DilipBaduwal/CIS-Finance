@@ -14,7 +14,7 @@ flowchart LR
   Q -->|chunk/document/page payload| PG
 ```
 
-The unauthenticated Streamlit interface is for local development only and must not be exposed to a network. The researcher uploads a PDF, reviews suggested metadata, selects pages, and submits. The app streams selected-page extraction, persists chunks in bounded batches, automatically generates grounded question candidates with local Ollama, embeds chunks with local Ollama, and upserts stable vector IDs to Qdrant. Questions require review and are not automatically approved.
+The Streamlit interface has five environment-configured local accounts for the initial small-team deployment, but it is still not a production identity/access-control system. The researcher uploads a PDF, reviews suggested metadata, selects pages, and submits. The app streams selected-page extraction, persists chunks in bounded batches, automatically generates grounded question candidates with local Ollama, embeds chunks with local Ollama, and upserts stable vector IDs to Qdrant. Questions require review and are not automatically approved.
 
 ## Data boundaries
 

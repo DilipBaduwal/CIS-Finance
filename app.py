@@ -27,17 +27,66 @@ from cis_fin.ingestion import (
 from cis_fin.migrations import MigrationError, run_migrations
 from cis_fin.pipeline import (
     PipelineProcessingError,
+    cancel_document_job,
     get_document_progress,
     process_document_pipeline,
 )
+from cis_fin.auth import authenticate, configured_users
 from cis_fin.question_review import QuestionReviewError, edit_question_candidate
 from cis_fin.report_metadata import ReportMetadataError, suggest_report_metadata
-from cis_fin.nifty_lookup import NiftyLookupError, lookup_nifty50
+from cis_fin.nifty_lookup import (
+    NiftyLookupError,
+    fallback_ticker,
+    find_local_company_hint,
+    lookup_local_nifty500,
+    lookup_nifty50,
+)
 from cis_fin.settings import Settings
 from cis_fin.storage import ObjectStoreError, S3ObjectStore
 
 
 st.set_page_config(page_title="CIS-FIN Research Pipeline", page_icon="📚", layout="wide")
+
+st.markdown(
+    """
+    <style>
+    .block-container { max-width: 1850px; padding-top: 2rem; padding-bottom: 4rem; }
+    [data-testid="stSidebar"] { border-right: 1px solid rgba(128,128,128,.18); }
+    [data-testid="stMetric"] { background: rgba(127,127,127,.08); border: 1px solid rgba(128,128,128,.16); padding: 14px; border-radius: 12px; }
+    div[data-testid="stStatusWidget"] { border-radius: 12px; }
+    .hero { padding: 1.8rem 2rem; border-radius: 20px; background: linear-gradient(135deg,#172554 0%,#0f766e 100%); color: white; margin-bottom: 1.2rem; box-shadow: 0 12px 30px rgba(15,118,110,.18); }
+    .hero h1 { margin: 0; font-size: 2.45rem; }
+    .hero p { margin: .35rem 0 0; opacity: .86; }
+    .section-label { color: #64748b; font-size: .75rem; text-transform: uppercase; letter-spacing: .14em; font-weight: 800; margin: 1.5rem 0 .45rem; }
+    div[data-testid="stFileUploader"] { border: 2px dashed rgba(20,184,166,.55); border-radius: 16px; padding: .5rem; background: rgba(20,184,166,.04); }
+    div[data-testid="stForm"] { border-radius: 16px; padding: 1.2rem; border: 1px solid rgba(128,128,128,.22); }
+    .step-card { border-left: 4px solid #14b8a6; padding: .25rem 0 .25rem 1rem; margin: 1rem 0; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+if "authenticated_user" not in st.session_state:
+    st.markdown(
+        '<div class="hero"><h1>📚 CIS-FIN</h1><p>Evidence-grounded financial research, in one calm workspace.</p></div>',
+        unsafe_allow_html=True,
+    )
+    _, login_column, _ = st.columns([1, 1.2, 1])
+    with login_column:
+        st.subheader("Welcome back")
+        st.caption("Sign in to upload reports and continue your research work.")
+        with st.form("login_form"):
+            login_username = st.text_input("Username", placeholder="Enter your username")
+            login_password = st.text_input("Password", type="password", placeholder="Enter your password")
+            login_submitted = st.form_submit_button("Sign in", use_container_width=True)
+    if login_submitted:
+        if authenticate(login_username, login_password):
+            st.session_state["authenticated_user"] = login_username.strip()
+            st.rerun()
+        st.error("Invalid username or password.")
+    if not configured_users():
+        st.warning("No users are configured. Set CIS_FIN_USER_1_USERNAME/PASSWORD through CIS_FIN_USER_5_USERNAME/PASSWORD.")
+    st.stop()
 
 
 def run_pipeline_with_ui_progress(current_settings, job_id, status_container):
@@ -119,6 +168,14 @@ def render_live_progress(current_settings, document_id):
             progress.invalid_candidate_count,
         )
     )
+    if progress.job_status in ("running", "queued", "retry_wait"):
+        if st.button("Stop this job", key="stop_job_" + str(progress.job_id)):
+            try:
+                cancel_document_job(current_settings, progress.job_id)
+                st.warning("Stop requested. The worker will release the lease at the next batch boundary.")
+                st.rerun()
+            except PipelineProcessingError as exc:
+                st.error(str(exc))
     if progress.job_status == "completed":
         st.success("All configured processing stages completed.")
     elif progress.job_status == "retry_wait":
@@ -131,15 +188,32 @@ def render_live_progress(current_settings, document_id):
         st.info("Processing is active. This panel refreshes automatically every 10 seconds.")
 
 
-st.title("CIS-FIN Research Pipeline")
-st.caption("Research pipeline foundation · shared evidence setup")
+with st.sidebar:
+    st.markdown("### 📚 CIS-FIN")
+    st.caption("Evidence-grounded research workspace")
+    st.divider()
+    st.write("**Signed in as**")
+    st.info(st.session_state["authenticated_user"])
+    if st.button("Sign out", use_container_width=True):
+        st.session_state.pop("authenticated_user", None)
+        st.rerun()
+    st.divider()
+    st.caption("Processing capacity")
+    st.metric("Concurrent jobs", Settings.from_env().max_concurrent_ingestions)
+    st.caption("Jobs are checkpointed and can be resumed safely.")
+
+st.markdown(
+    '<div class="hero"><h1>CIS-FIN Research Pipeline</h1>'
+    '<p>Upload reports, extract evidence, generate grounded questions, and index research data.</p></div>',
+    unsafe_allow_html=True,
+)
 st.warning(
     "This workspace does not create cloud accounts or issue database credentials. "
     "The project owner must provision managed services and share credentials securely."
 )
 
 settings = Settings.from_env()
-st.subheader("Configuration status")
+st.markdown('<div class="section-label">System readiness</div>', unsafe_allow_html=True)
 configuration = (
     ("Managed PostgreSQL", settings.database_url is not None),
     (
@@ -153,29 +227,27 @@ configuration = (
     ),
     ("S3-compatible storage", settings.s3_bucket is not None),
 )
-for label, configured in configuration:
-    st.write("{}: {}".format("✅" if configured else "⚪", label + (" configured" if configured else " not configured")))
+metrics = st.columns(len(configuration))
+for metric, (label, configured) in zip(metrics, configuration):
+    with metric:
+        st.metric(label, "Ready" if configured else "Missing", delta=None)
 
-st.subheader("Read-only connectivity tests")
+with st.expander("Run connectivity checks", expanded=False):
+    st.caption("These checks are read-only and do not upload, modify, or delete data.")
+    checks = (
+        ("Test PostgreSQL", check_database),
+        ("Test Qdrant", check_qdrant),
+        ("Test object storage", check_storage),
+    )
+    columns = st.columns(len(checks))
+    for column, (label, check) in zip(columns, checks):
+        with column:
+            if st.button(label, use_container_width=True):
+                result = check(settings)
+                (st.success if result.ok else st.error)(result.message)
+st.markdown('<div class="section-label">Step 1 · Source document</div>', unsafe_allow_html=True)
+st.subheader("Start a new research document")
 st.caption("Each test performs only a read operation. No upload, collection creation, ingestion, or deletion is performed.")
-checks = (
-    ("Test PostgreSQL", check_database),
-    ("Test Qdrant", check_qdrant),
-    ("Test object storage", check_storage),
-)
-columns = st.columns(len(checks))
-for column, (label, check) in zip(columns, checks):
-    with column:
-        if st.button(label, use_container_width=True):
-            result = check(settings)
-            (st.success if result.ok else st.error)(result.message)
-
-st.info(
-    "This Streamlit setup page is not authenticated and is intended for local development only. "
-    "Do not expose it to a network or use it as a shared researcher portal."
-)
-
-st.subheader("Upload and ingest a PDF")
 st.caption(
     "Choose a PDF from your browser. It is sent to this local Streamlit server, then stored in the configured "
     "object-storage bucket and its metadata/chunks are written to PostgreSQL only after you submit."
@@ -226,11 +298,16 @@ if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
                             settings.ollama_base_url,
                             settings.ollama_model,
                         )
+                filename_company = None
+                try:
+                    filename_company = find_local_company_hint(uploaded_pdf.name)
+                except NiftyLookupError:
+                    pass
                 detected = {
-                    "company_name_input": metadata.company_name,
-                    "ticker_symbol_input": metadata.ticker_symbol,
+                    "company_name_input": filename_company.company_name if filename_company else metadata.company_name,
+                    "ticker_symbol_input": filename_company.symbol if filename_company else metadata.ticker_symbol,
                     "sector_input": metadata.sector,
-                    "industry_input": metadata.industry,
+                    "industry_input": filename_company.industry if filename_company else metadata.industry,
                     "document_title_input": metadata.document_title or uploaded_pdf.name.rsplit(".", 1)[0],
                     "document_type_input": (
                         metadata.document_type
@@ -249,18 +326,32 @@ if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
                 }
                 # Verify/fill company fields from official exchange sources. This runs
                 # even when the model supplied values, since its classifications may be wrong.
-                if metadata.company_name:
+                if detected["company_name_input"]:
                     try:
-                        company = lookup_nifty50(metadata.company_name, metadata.ticker_symbol)
+                        company = lookup_local_nifty500(
+                            detected["company_name_input"], detected["ticker_symbol_input"]
+                        )
                         detected["ticker_symbol_input"] = company.symbol
-                        # Do not retain an LLM guess when official classification is absent.
-                        detected["sector_input"] = company.sector
-                        detected["industry_input"] = company.industry
-                        st.session_state["nifty_lookup_source"] = company.source_url
-                        st.session_state["nse_classification_source"] = company.classification_source_url
+                        if company.industry:
+                            detected["industry_input"] = company.industry
+                        st.session_state["nifty_lookup_source"] = "data/nifty500.csv"
+                        st.session_state["nse_classification_source"] = "Nifty 500 local reference snapshot"
                         st.session_state["nifty_lookup_match"] = company.company_name
                     except NiftyLookupError as exc:
-                        st.session_state["nifty_lookup_error"] = str(exc)
+                        try:
+                            company = lookup_nifty50(
+                                detected["company_name_input"], detected["ticker_symbol_input"]
+                            )
+                            detected["ticker_symbol_input"] = company.symbol
+                            if company.industry:
+                                detected["industry_input"] = company.industry
+                            st.session_state["nifty_lookup_source"] = company.source_url
+                            st.session_state["nse_classification_source"] = company.classification_source_url
+                            st.session_state["nifty_lookup_match"] = company.company_name
+                        except NiftyLookupError as live_exc:
+                            st.session_state["nifty_lookup_error"] = str(live_exc)
+                            if not detected["ticker_symbol_input"]:
+                                detected["ticker_symbol_input"] = fallback_ticker(metadata.company_name)
                 for key, value in detected.items():
                     st.session_state[key] = value
                 st.session_state["metadata_analysis_complete"] = True
@@ -282,6 +373,12 @@ elif uploaded_pdf and st.session_state.get("metadata_analysis_complete"):
         "Company and report details were suggested from the first four pages using local Ollama. "
         "Please review and correct them before submission. Sector and industry are suggestions, not verified classifications."
     )
+    if not st.session_state.get("ticker_symbol_input", "").strip():
+        st.warning("The ticker was not detected automatically.")
+        if st.button("Retry automatic metadata detection", key="retry_metadata_detection"):
+            st.session_state.pop("metadata_analysis_checksum", None)
+            st.session_state["metadata_analysis_complete"] = False
+            st.rerun()
 if uploaded_pdf and st.session_state.get("nifty_lookup_match"):
     st.info(
         "Verified {} against Nifty 50, then searched market-information pages for sector and industry. "
@@ -296,6 +393,7 @@ elif uploaded_pdf and st.session_state.get("nifty_lookup_error"):
     st.caption("Nifty lookup note: {}".format(st.session_state["nifty_lookup_error"]))
 
 if uploaded_pdf and inspected_page_count:
+    st.markdown('<div class="section-label">Step 2 · Select pages</div>', unsafe_allow_html=True)
     page_widget_key = "{}:{}".format(uploaded_pdf.name, uploaded_pdf.size)
     lower_column, upper_column = st.columns(2)
     with lower_column:
@@ -326,33 +424,36 @@ else:
     selected_page_end = None
 
 with st.form("pdf_ingestion_form", clear_on_submit=False):
-    st.markdown("**Review the automatically detected details**")
-    company_name = st.text_input("Company name", key="company_name_input")
-    ticker_symbol = st.text_input("Ticker symbol", key="ticker_symbol_input")
-    sector = st.text_input("Sector (web search)", key="sector_input")
-    industry = st.text_input("Industry (web search)", key="industry_input")
-    document_title = st.text_input("Document title", key="document_title_input")
-    document_type = st.selectbox(
-        "Document type",
-        options=(
-            "annual_report",
-            "integrated_report",
-            "sustainability_report",
-            "investor_presentation",
-            "earnings_call_transcript",
-            "official_disclosure",
-            "other",
-        ),
-        key="document_type_input",
-    )
-    fiscal_year = st.text_input("Fiscal year", key="fiscal_year_input")
-    source_url = st.text_input("Official source URL (optional)")
+    st.markdown('<div class="step-card"><strong>Step 2 · Confirm report details</strong><br><small>These values are suggested from the first pages. Review them before processing.</small></div>', unsafe_allow_html=True)
+    left, right = st.columns(2, gap="large")
+    with left:
+        company_name = st.text_input("Company name", key="company_name_input")
+        sector = st.text_input("Sector", key="sector_input")
+        document_title = st.text_input("Document title", key="document_title_input")
+        fiscal_year = st.text_input("Fiscal year", key="fiscal_year_input")
+    with right:
+        ticker_symbol = st.text_input("Ticker symbol", key="ticker_symbol_input")
+        industry = st.text_input("Industry", key="industry_input")
+        document_type = st.selectbox(
+            "Document type",
+            options=(
+                "annual_report",
+                "integrated_report",
+                "sustainability_report",
+                "investor_presentation",
+                "earnings_call_transcript",
+                "official_disclosure",
+                "other",
+            ),
+            key="document_type_input",
+        )
+        source_url = st.text_input("Official source URL (optional)")
     source_classification = st.selectbox(
         "Source classification",
         options=("public_source", "confidential_research"),
         help="Only upload confidential notes if authorized and the storage provider is approved for them.",
     )
-    submitted = st.form_submit_button("Upload and process selected pages")
+    submitted = st.form_submit_button("🚀 Upload and start processing", use_container_width=True)
 
 if submitted:
     if not uploaded_pdf:
@@ -428,7 +529,7 @@ if submitted:
                 pipeline_result = None
                 if (
                     result.duplicate
-                    and result.existing_status in ("failed", "retry_wait")
+                    and result.existing_status in ("failed", "retry_wait", "cancelled")
                     and result.existing_stage in ("registered", "stored", "extracted")
                 ):
                     result = resume_extraction_job(
@@ -440,7 +541,7 @@ if submitted:
                     )
                 if not result.duplicate or (
                     result.existing_stage in ("chunked", "questions", "embedded", "indexed")
-                    and result.existing_status in ("queued", "retry_wait")
+                    and result.existing_status in ("queued", "retry_wait", "cancelled")
                 ):
                     pipeline_result = run_pipeline_with_ui_progress(settings, result.job_id, progress)
             if result.duplicate:
@@ -487,40 +588,10 @@ if submitted:
             st.error(str(exc))
 
 last_document_id = st.session_state.get("last_ingested_document_id")
-try:
-    recent_documents = list_recent_documents(settings)
-except CompanyLookupError as exc:
-    recent_documents = []
-    st.error("Could not load saved documents for question review: {}".format(exc))
-
-if recent_documents:
-    recent_document_ids = [row[0] for row in recent_documents]
-    selected_index = (
-        recent_document_ids.index(last_document_id)
-        if last_document_id in recent_document_ids
-        else 0
-    )
-    selected_recent_document_id = st.selectbox(
-        "Choose a saved document to view or edit questions",
-        options=recent_document_ids,
-        index=selected_index,
-        format_func=lambda document_id: next(
-            "{} · {} · {} · {}".format(
-                row[2],
-                row[1],
-                row[3] or "year not set",
-                row[4],
-            )
-            for row in recent_documents
-            if row[0] == document_id
-        ),
-        key="saved_document_question_review",
-    )
-    last_document_id = selected_recent_document_id
-    st.session_state["last_ingested_document_id"] = last_document_id
 
 if last_document_id:
-    st.subheader("Live processing progress")
+    st.markdown('<div class="section-label">Step 3 · Results and review</div>', unsafe_allow_html=True)
+    st.subheader("Processing and evidence review")
     render_live_progress(settings, uuid.UUID(last_document_id))
     st.subheader("Processed evidence")
     st.caption(
@@ -592,7 +663,11 @@ if last_document_id:
                         else "QUOTE MATCH",
                         candidate_lookup[candidate_id][0]["page_start"],
                         candidate_lookup[candidate_id][0]["page_end"],
-                        candidate_lookup[candidate_id][1]["question"][:100],
+                        "{} / {} · {}".format(
+                            candidate_lookup[candidate_id][1].get("framework", "TOE"),
+                            candidate_lookup[candidate_id][1].get("dimension", "unknown").title(),
+                            candidate_lookup[candidate_id][1]["question"][:80],
+                        ),
                     ),
                     key="question_review_candidate_" + last_document_id,
                 )
@@ -605,14 +680,23 @@ if last_document_id:
                 else:
                     st.success("The quotation matches source text. The candidate still needs human review.")
                 st.markdown(
-                    "**Source pages:** {}–{} · **Chunk:** {}".format(
+                    "**Framework:** {} · **Category:** {} · **Source pages:** {}–{} · **Chunk:** {}".format(
+                        candidate.get("framework", "TOE"),
+                        candidate.get("dimension", "unknown").title(),
                         record["page_start"],
                         record["page_end"],
                         record["chunk_index"],
                     )
                 )
                 with st.expander("View original source chunk", expanded=True):
-                    st.text(record["chunk_text"])
+                    st.text_area(
+                        "Source text",
+                        value=record["chunk_text"],
+                        height=280,
+                        disabled=True,
+                        label_visibility="collapsed",
+                        key="source_preview_" + selected_candidate_id,
+                    )
                 if candidate["review_status"] != "pending":
                     st.info(
                         "This candidate is {} and is read-only here. Editing is limited to pending candidates "
