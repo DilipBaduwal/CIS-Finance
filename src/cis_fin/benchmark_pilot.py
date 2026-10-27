@@ -9,11 +9,16 @@ from cis_fin.benchmark_vectors import load_vectors_by_point_ids
 from cis_fin.postgres import secure_postgres_dsn
 
 
-def run_pilot(settings, output_path="artifacts/it_ai_readiness_benchmark_2025-2026.json"):
+def run_pilot(settings, output_path="artifacts/it_ai_readiness_benchmark_2025-2026.json", industry="Information Technology", fiscal_year="2025-2026", symbols=None):
     import psycopg
 
     with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=8) as connection:
         with connection.cursor() as cursor:
+            symbol_filter = ""
+            params = []
+            if symbols:
+                symbol_filter = " AND c.symbol = ANY(%s)"
+                params.append(list(symbols))
             cursor.execute(
                 """
                 SELECT ch.chunk_id::text, c.symbol, d.document_id::text, ch.page_start,
@@ -26,16 +31,12 @@ def run_pilot(settings, output_path="artifacts/it_ai_readiness_benchmark_2025-20
                 LEFT JOIN chunk_question_evidence ev ON ev.chunk_id = ch.chunk_id
                 LEFT JOIN questions q ON q.question_id = ev.question_id
                 WHERE d.processing_status = 'completed'
-                  AND (
-                      lower(COALESCE(c.industry, '')) LIKE '%information technology%'
-                      OR lower(COALESCE(c.industry, '')) LIKE '%software%'
-                      OR lower(COALESCE(c.industry, '')) LIKE '%it services%'
-                  )
                   AND regexp_replace(COALESCE(d.fiscal_year, ''), '[^0-9]', '', 'g')
                       IN ('2526', '202526', '20252026')
                 GROUP BY ch.chunk_id, c.symbol, d.document_id, ch.page_start,
                          ch.page_end, ch.chunk_text
-                """
+                """ + symbol_filter,
+                params,
             )
             rows = cursor.fetchall()
 
@@ -72,8 +73,8 @@ def run_pilot(settings, output_path="artifacts/it_ai_readiness_benchmark_2025-20
     clusters = discover_theme_clusters(chunks, similarity_threshold=0.70, maximum_per_dimension=10)
     recurring = [cluster for cluster in clusters if cluster.support_count >= 2]
     payload = {
-        "industry": "Information Technology",
-        "fiscal_year": "2025-2026",
+        "industry": industry,
+        "fiscal_year": fiscal_year,
         "companies": sorted({row[1] for row in rows}),
         "source_chunk_count": len(chunks),
         "cluster_count": len(clusters),
