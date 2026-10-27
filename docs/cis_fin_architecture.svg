@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1100" viewBox="0 0 1800 1100">
+  <rect width="1800" height="1100" fill="#f7f6f1"/>
+  <style>
+    .title{font:700 38px Arial;fill:#20242a}.subtitle{font:400 19px Arial;fill:#626a72}.section{font:700 27px Arial;fill:#20242a}.box{fill:#fff;stroke:#c9c5ba;stroke-width:2;rx:14}.boxtext{font:600 18px Arial;fill:#20242a}.small{font:400 15px Arial;fill:#626a72}.arrow{stroke:#32648f;stroke-width:3;fill:none;marker-end:url(#arrow)}.green{stroke:#347751}.gold{stroke:#a06b0b}
+  </style>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#32648f"/></marker></defs>
+  <text x="70" y="65" class="title">CIS-FIN AI-readiness benchmark architecture</text>
+  <text x="70" y="98" class="subtitle">Client assessment, researcher training, TOE scoring, regression, and evidence traceability</text>
+
+  <text x="70" y="155" class="section">1. Client-facing application</text>
+  <rect x="70" y="180" width="250" height="90" class="box"/><text x="195" y="220" text-anchor="middle" class="boxtext">Industry + fiscal year</text><text x="195" y="246" text-anchor="middle" class="small">or upload annual report</text>
+  <rect x="410" y="180" width="250" height="90" class="box"/><text x="535" y="220" text-anchor="middle" class="boxtext">Latest benchmark</text><text x="535" y="246" text-anchor="middle" class="small">same industry/year cohort</text>
+  <rect x="750" y="180" width="250" height="90" class="box"/><text x="875" y="220" text-anchor="middle" class="boxtext">TOE dashboard</text><text x="875" y="246" text-anchor="middle" class="small">Technology · Organization · Environment</text>
+  <rect x="1090" y="180" width="250" height="90" class="box"/><text x="1215" y="220" text-anchor="middle" class="boxtext">Question detail</text><text x="1215" y="246" text-anchor="middle" class="small">company scores and ranking</text>
+  <rect x="1430" y="180" width="280" height="90" class="box"/><text x="1570" y="220" text-anchor="middle" class="boxtext">Evidence explanation</text><text x="1570" y="246" text-anchor="middle" class="small">pages · chunks · rationale</text>
+  <path d="M320 225 H405" class="arrow"/><path d="M660 225 H745" class="arrow"/><path d="M1000 225 H1085" class="arrow"/><path d="M1340 225 H1425" class="arrow"/>
+  <path d="M195 275 V330 H535 V275" class="arrow green"/><text x="365" y="355" text-anchor="middle" class="small">Annual report: extract → chunk → match → Ollama score → compare</text>
+
+  <text x="70" y="445" class="section">2. Researcher/testing and benchmark-training application</text>
+  <rect x="70" y="475" width="230" height="86" class="box"/><text x="185" y="514" text-anchor="middle" class="boxtext">Upload + metadata review</text><text x="185" y="538" text-anchor="middle" class="small">company · pages · year</text>
+  <rect x="350" y="475" width="230" height="86" class="box"/><text x="465" y="514" text-anchor="middle" class="boxtext">Extract and chunk</text><text x="465" y="538" text-anchor="middle" class="small">page-cited deterministic chunks</text>
+  <rect x="630" y="475" width="230" height="86" class="box"/><text x="745" y="514" text-anchor="middle" class="boxtext">TOE questions</text><text x="745" y="538" text-anchor="middle" class="small">local Ollama + source quotes</text>
+  <rect x="910" y="475" width="230" height="86" class="box"/><text x="1025" y="514" text-anchor="middle" class="boxtext">Embeddings</text><text x="1025" y="538" text-anchor="middle" class="small">local Ollama → Qdrant</text>
+  <rect x="1190" y="475" width="230" height="86" class="box"/><text x="1305" y="514" text-anchor="middle" class="boxtext">Theme discovery</text><text x="1305" y="538" text-anchor="middle" class="small">semantic recurring themes</text>
+  <rect x="1470" y="475" width="240" height="86" class="box"/><text x="1590" y="514" text-anchor="middle" class="boxtext">Review + version</text><text x="1590" y="538" text-anchor="middle" class="small">max 10 per TOE dimension</text>
+  <path d="M300 518 H345" class="arrow"/><path d="M580 518 H625" class="arrow"/><path d="M860 518 H905" class="arrow"/><path d="M1140 518 H1185" class="arrow"/><path d="M1420 518 H1465" class="arrow"/>
+
+  <rect x="200" y="690" width="300" height="100" class="box"/><text x="350" y="730" text-anchor="middle" class="boxtext">PostgreSQL</text><text x="350" y="756" text-anchor="middle" class="small">source of truth · jobs · chunks</text>
+  <rect x="750" y="690" width="300" height="100" class="box"/><text x="900" y="730" text-anchor="middle" class="boxtext">Regression model</text><text x="900" y="756" text-anchor="middle" class="small">company features → scores</text>
+  <rect x="1300" y="690" width="300" height="100" class="box"/><text x="1450" y="730" text-anchor="middle" class="boxtext">Immutable benchmark versions</text><text x="1450" y="756" text-anchor="middle" class="small">v1 → v2 → v3 + audit history</text>
+  <path d="M465 561 V640 H350 V685" class="arrow"/><path d="M745 561 V685" class="arrow"/><path d="M1025 561 V640 H900 V685" class="arrow"/><path d="M1305 561 V685" class="arrow"/><path d="M1590 561 V640 H1450 V685" class="arrow"/>
+  <text x="900" y="865" text-anchor="middle" class="section">Automatic post-index refresh</text>
+  <text x="900" y="900" text-anchor="middle" class="subtitle">new report → matching industry/year cohort → themes → feature matrix → regression → client dashboard</text>
+  <text x="900" y="1015" text-anchor="middle" class="small">PostgreSQL is authoritative. Qdrant is rebuildable. Ollama runs locally. Jobs are checkpointed and resumable.</text>
+</svg>

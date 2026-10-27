@@ -14,9 +14,11 @@ Implemented:
 - Local environment configuration template and credential-safe Git ignore rules.
 - Automated unit tests that run without cloud credentials or live services.
 
-Implemented: idempotent PostgreSQL document registration, verified S3-compatible original storage, streamed page extraction with bounded PostgreSQL chunk batches, retryable jobs, duplicate detection, and selected-page extraction. After extraction, Streamlit automatically generates grounded question candidates in sequential batches using local Ollama, saves questions and exact source quotations in PostgreSQL, embeds chunks locally, and idempotently upserts them to Qdrant. A job is marked complete only after these stages and the corresponding PostgreSQL status writes succeed. Candidates remain unapproved for researcher review.
+Implemented: idempotent PostgreSQL document registration, verified S3-compatible original storage, streamed page extraction with bounded PostgreSQL chunk batches, retryable jobs, duplicate detection, selected-page extraction, TOE question generation, local embeddings, and idempotent Qdrant indexing. The benchmark layer discovers semantic recurring themes, keeps up to ten reviewed questions per TOE dimension, scores company evidence from 0–5, trains provisional regression models, and creates immutable industry/year benchmark versions.
 
-Still not implemented: production authentication/authorization and a question approval UI, scheduled retries, company-wide reprocessing, and full cross-service reconciliation. PyMuPDF ingestion is tested locally with fake repositories/storage; the live question/vector processing path must still be validated against the configured managed services. Docling remains optional/unverified and MinerU is not integrated.
+The system now supports automatic cohort refresh after chunking and indexing. A completed report is mapped to its normalized industry and fiscal year, the matching cohort is recalculated, and the client-facing dashboard reads the latest benchmark version. Benchmark versions, approvals, confidence values, supporting chunk IDs, and audit events are persisted in PostgreSQL. The current validated pilot includes four Information Technology companies for 2025–2026; other industries need at least two comparable companies in the same fiscal year before an industry benchmark is meaningful.
+
+Scores are provisional until reviewed targets are available. The client app is suitable for controlled pilot use; production deployment still requires operational monitoring, security review, deployment hardening, and broader real-report validation.
 
 ## Requirements
 
@@ -46,6 +48,14 @@ Launch Streamlit locally (the page is unauthenticated; do not expose it to your 
 ```sh
 PYTHONPATH=src streamlit run app.py --server.address 127.0.0.1
 ```
+
+Launch the separate client-facing benchmark app:
+
+```sh
+streamlit run client/client_app.py --server.address 127.0.0.1
+```
+
+The client app supports industry selection, fiscal-year filtering, cumulative TOE industry scores, question-level factor details, company comparisons, and company-specific source evidence. Internal review and benchmark approval controls remain in the main researcher application.
 
 Keep the development UI bound to loopback; it has no authentication and is not a shared researcher portal:
 
@@ -148,6 +158,21 @@ The command resumes from the saved `chunked` checkpoint; it does not re-extract 
 
 PostgreSQL transactions do not include S3 or Qdrant. The pipeline uses checksums, deterministic IDs, stage checkpoints, and idempotent upserts; it does not claim a single transaction across services.
 
+## Industry benchmarking
+
+Completed reports are grouped by normalized industry and fiscal year. For example, `25-26` and `2025-2026` belong to the same fiscal-year cohort. When a report completes chunking and Qdrant indexing, the matching cohort is refreshed automatically:
+
+```text
+PDF → pages → chunks → TOE questions → embeddings → Qdrant
+    → semantic themes → company feature scores → regression → benchmark version
+```
+
+Each TOE dimension is capped at ten questions; the system does not invent filler questions when the reports do not contain enough recurring evidence. New recurring themes become review candidates. Questions with confidence above 70% are marked auto-eligible, but official benchmark changes remain reviewable and auditable.
+
+Benchmark version files are written under `artifacts/benchmark_*_v*.json`. The corresponding PostgreSQL tables are `benchmark_versions` and `benchmark_approvals`. Previous versions are immutable, so adding a company creates a new version rather than rewriting historical results.
+
+The regression scores are provisional evidence-derived scores in the pilot. They should not be interpreted as financial, investment, or certification ratings.
+
 `reindex-document --dry-run` counts chunks that need vectors for the currently configured collection/model without writes. Omit `--dry-run` to index them. `reconcile-vectors` is read-only and compares PostgreSQL registry rows to Qdrant points for one document; use it to spot missing, untracked, or older-model records.
 
 ## Database credentials
@@ -166,6 +191,3 @@ There is no central account or password included in this project. The project ow
 - [Question generation](docs/GROUNDED_QUESTION_GENERATION.md)
 - [Operations](docs/OPERATIONS.md)
 - [Backup and recovery](docs/BACKUP_AND_RECOVERY.md)
-# CIS-Finance
-# CIS-Finance
-# CIS-Finance
