@@ -5,10 +5,40 @@ import uuid
 
 from cis_fin.postgres import secure_postgres_dsn
 from cis_fin.settings import Settings
+from cis_fin.benchmark import BenchmarkCohort, build_cohorts
 
 
 class CompanyLookupError(Exception):
     """The shared company list could not be retrieved."""
+
+
+def list_benchmark_cohorts(settings: Settings, limit: int = 500) -> List[BenchmarkCohort]:
+    """Return dynamic same-industry, same-fiscal-year document cohorts."""
+    if not settings.database_url:
+        raise CompanyLookupError("Set DATABASE_URL in the local .env file.")
+    try:
+        import psycopg
+    except ImportError as exc:
+        raise CompanyLookupError("PostgreSQL driver is missing; install requirements.txt.") from exc
+    try:
+        with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=5) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT c.symbol, c.company_name, c.industry, COALESCE(d.fiscal_year, '')
+                    FROM documents d
+                    JOIN companies c ON c.company_id = d.company_id
+                    WHERE d.processing_status = 'completed'
+                    ORDER BY c.symbol, d.fiscal_year
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                return build_cohorts(cursor.fetchall())
+    except psycopg.Error as exc:
+        raise CompanyLookupError(
+            "Could not load benchmark cohorts ({}). Verify database read permissions.".format(type(exc).__name__)
+        ) from exc
 
 
 def list_recent_documents(settings: Settings, limit: int = 50) -> List[Tuple[str, str, str, str, str]]:

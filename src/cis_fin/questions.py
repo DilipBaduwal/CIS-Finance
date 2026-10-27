@@ -104,7 +104,7 @@ class OllamaQuestionGenerator:
         self,
         base_url: str = "http://127.0.0.1:11434",
         model: str = "qwen2.5:3b",
-        timeout_seconds: int = 60,
+        timeout_seconds: int = 180,
     ) -> None:
         parsed = urlsplit(base_url)
         if (

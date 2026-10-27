@@ -288,6 +288,7 @@ class MigrationFileTests(unittest.TestCase):
                 "0005_question_generation_checkpoints.sql",
                 "0006_auto_detected_company_profiles.sql",
                 "0007_question_generation_failure_retries.sql",
+                "0008_benchmark_versions.sql",
             ],
         )
 

@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from cis_fin.ingestion import PostgresIngestionStore
+from cis_fin.ingestion import IngestionError, PostgresIngestionStore
 from cis_fin.questions import QuestionGenerationError, generate_document_questions
 from cis_fin.settings import Settings
 from cis_fin.vector_index import VectorIndexError, index_document_chunks
@@ -353,8 +353,30 @@ def process_document_pipeline(
     """Run all bounded post-extraction stages; each stage is idempotent and checkpointed."""
     job_store = PipelineJobStore(settings)
     document_id = job_store.claim(job_id)
-    initial_progress = get_document_progress(settings, document_id)
+    try:
+        initial_progress = get_document_progress(settings, document_id)
+    except IngestionError:
+        # Test/dry-run job stores may intentionally not provide a database.
+        # A real PipelineJobStore rejects missing DATABASE_URL before reaching
+        # this branch, so configured production runs retain normal progress.
+        if settings.database_url:
+            raise
+        initial_progress = DocumentProgress(
+            job_id=job_id,
+            job_status="running",
+            stage="extracted",
+            attempt_count=0,
+            max_attempts=5,
+            document_status="extracted",
+            lease_expires_at=None,
+            chunk_count=0,
+            question_checkpoints=0,
+            candidate_count=0,
+            invalid_candidate_count=0,
+            indexed_chunk_count=0,
+        )
     checkpoint_baseline = initial_progress.question_checkpoints
+    cancellation_requested = getattr(job_store, "cancellation_requested", lambda _job_id: False)
     total_chunks = initial_progress.chunk_count
     questions_processed = 0
     candidates_created = 0
@@ -366,7 +388,7 @@ def process_document_pipeline(
             progress_callback("Generating grounded questions in batches of 10…")
             progress_callback("QUESTION_PROGRESS|{}|{}".format(checkpoint_baseline, total_chunks))
         while True:
-            if job_store.cancellation_requested(job_id):
+            if cancellation_requested(job_id):
                 raise PipelineProcessingError("Job stopped by the researcher. Upload the same PDF and page range to resume it.")
             result = generate_document_questions(
                 settings,
@@ -408,9 +430,11 @@ def process_document_pipeline(
                 else None
             ),
         )
-        if job_store.cancellation_requested(job_id):
+        if cancellation_requested(job_id):
             raise PipelineProcessingError("Job stopped by the researcher. Upload the same PDF and page range to resume it.")
         job_store.checkpoint(job_id, "indexed")
+        from cis_fin.benchmark_auto_update import auto_update_after_index
+        benchmark_refresh = auto_update_after_index(settings, progress_callback)
         job_store.complete(job_id, document_id)
         if progress_callback:
             progress_callback("Questions saved and all chunks indexed.")
@@ -422,7 +446,7 @@ def process_document_pipeline(
             newly_indexed_chunks=newly_indexed,
         )
     except Exception as exc:
-        if job_store.cancellation_requested(job_id):
+        if cancellation_requested(job_id):
             raise PipelineProcessingError(
                 "Job stopped by the researcher. Upload the same PDF and page range to resume it."
             ) from exc

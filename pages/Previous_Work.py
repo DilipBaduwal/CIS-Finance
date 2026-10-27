@@ -2,6 +2,9 @@
 
 import streamlit as st
 import uuid
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from cis_fin.auth import authenticate, configured_users
 from cis_fin.company_queries import CompanyLookupError, list_recent_documents

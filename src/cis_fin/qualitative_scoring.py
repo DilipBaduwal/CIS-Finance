@@ -1,0 +1,34 @@
+"""Explainable 0–5 qualitative AI-readiness scoring."""
+import json
+from urllib.request import Request, urlopen
+
+
+RUBRIC = {
+    0: "No evidence or explicit absence of capability.",
+    1: "Very limited or aspirational mention without implementation evidence.",
+    2: "Early activity or isolated initiative with limited detail.",
+    3: "Established capability or repeated activity with some evidence.",
+    4: "Strong, scaled capability with outcomes, governance, or measurable progress.",
+    5: "Leading, integrated capability with clear outcomes, scale, and continuous improvement.",
+}
+
+
+def score_qualitative_evidence(settings, question, evidence, page, dimension, model="qwen2.5:7b"):
+    prompt = (
+        "Score this annual-report evidence for AI readiness on a 0–5 scale. "
+        "Use only the rubric and evidence; do not infer missing facts. Return JSON only with score, "
+        "rationale, evidence_quote, confidence. TOE dimension: {}. Question: {}. Page: {}. "
+        "Rubric: {} Evidence: {}"
+    ).format(dimension, question[:400], page, json.dumps(RUBRIC), evidence[:1400])
+    schema = {"type": "object", "properties": {"score": {"type": "integer", "minimum": 0, "maximum": 5}, "rationale": {"type": "string"}, "evidence_quote": {"type": "string"}, "confidence": {"type": "number"}}, "required": ["score", "rationale", "evidence_quote", "confidence"]}
+    body = {"model": model, "stream": False, "format": schema, "options": {"temperature": 0, "num_predict": 96, "num_ctx": 2048}, "messages": [{"role": "user", "content": prompt}]}
+    request = Request(settings.ollama_base_url.rstrip("/") + "/api/chat", data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
+    with urlopen(request, timeout=45) as response:
+        result = json.loads(response.read())
+    content = result["message"]["content"].strip()
+    if "```" in content:
+        content = content.replace("```json", "").replace("```", "").strip()
+    scored = json.loads(content)
+    scored["score"] = int(float(scored["score"]))
+    scored["confidence"] = max(0.0, min(1.0, float(scored["confidence"])))
+    return scored
