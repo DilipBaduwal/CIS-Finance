@@ -40,7 +40,7 @@ def build_features_from_document(themes, records):
     return output
 
 
-def score_document_themes_with_llm(settings, themes, records, model="qwen2.5:7b"):
+def score_document_themes_with_llm(settings, themes, records, model=None, strict=False):
     """Score matched themes with local Ollama, falling back per theme on failure."""
     preliminary = build_features_from_document(themes, records)
     output = {}
@@ -64,5 +64,7 @@ def score_document_themes_with_llm(settings, themes, records, model="qwen2.5:7b"
             )
             output[key] = dict(item, score=float(judged["score"]), status="ollama_reviewed", rationale=judged.get("rationale", ""), confidence=judged.get("confidence", 0.0), evidence_quote=judged.get("evidence_quote", ""))
         except Exception as exc:
+            if strict:
+                raise RuntimeError("Strict scoring failed for {}: {}".format(key, exc)) from exc
             output[key] = dict(item, status="automatic_pilot_fallback", llm_error=str(exc))
     return output

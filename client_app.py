@@ -61,11 +61,42 @@ def find_benchmark(industry, year):
     for path in sorted(Path("artifacts").glob("benchmark_*_v*.json"), key=lambda item: int(item.stem.rsplit("_v", 1)[-1]), reverse=True):
         item = json.loads(path.read_text(encoding="utf-8"))
         if normalize_industry(item.get("industry", "")) == normalize_industry(industry) and normalize_fiscal_year(item.get("fiscal_year", "")) == normalized_year:
+            # Do not serve known contaminated IT versions created before
+            # document-industry validation was added. v3 is the last valid
+            # cohort containing LTM.
+            if normalize_industry(industry) == "Information Technology" and any(company in {"TATASTEEL", "TRENT"} for company in item.get("companies", [])):
+                continue
             return item
     fallback = Path("artifacts/it_ai_readiness_benchmark_2025-2026.final.json")
     if fallback.exists() and normalize_industry(industry) == "Information Technology":
         return json.loads(fallback.read_text(encoding="utf-8"))
     return None
+
+
+def find_regression_matrix(benchmark=None):
+    """Load the matrix belonging to the selected benchmark version.
+
+    Cohort updates write versioned matrices; using the old unversioned matrix
+    here made newly trained companies disappear from the client view.
+    """
+    candidates = []
+    if benchmark:
+        version_number = benchmark.get("version_number")
+        if version_number:
+            candidates.append(Path("artifacts/it_ai_readiness_regression_matrix_v{}.json".format(version_number)))
+    candidates.append(Path("artifacts/it_ai_readiness_regression_matrix.json"))
+    for path in candidates:
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    return {"rows": [], "feature_names": []}
+
+
+def benchmark_matrix_rows(matrix, benchmark):
+    """Return only rows belonging to the selected industry/year cohort."""
+    allowed = {str(company).strip().upper() for company in (benchmark or {}).get("companies", [])}
+    if not allowed:
+        return []
+    return [row for row in matrix.get("rows", []) if str(row.get("company", "")).strip().upper() in allowed]
 
 
 def _question_terms(text):
@@ -130,11 +161,10 @@ else:
             selected_question = selected_theme.get("question", "Selected TOE factor")
             st.markdown('<div class="hero"><h1>Question detail</h1><p>{} · {} · {}</p></div>'.format(normalize_industry(industry), normalize_fiscal_year(year), selected_theme.get("toe_dimension", "TOE").title()), unsafe_allow_html=True)
             st.markdown('<div class="section"><h2>{}</h2><p class="muted">Scores for this question across every company in the same industry and fiscal year.</p></div>'.format(selected_question), unsafe_allow_html=True)
-            matrix_path = Path("artifacts/it_ai_readiness_regression_matrix.json")
-            matrix = json.loads(matrix_path.read_text(encoding="utf-8")) if matrix_path.exists() else {"rows": []}
+            matrix = find_regression_matrix(benchmark)
             feature_name = "theme_{}".format(selected_index)
             company_scores = []
-            for company_row in matrix.get("rows", []):
+            for company_row in benchmark_matrix_rows(matrix, benchmark):
                 raw = company_row.get("features", {}).get(feature_name)
                 company_scores.append({"Company": company_row.get("company"), "Score (0–5)": raw, "Score (0–100)": round(float(raw) * 20, 1) if raw is not None else None})
             st.dataframe(sorted(company_scores, key=lambda item: item["Score (0–5)"] if item["Score (0–5)"] is not None else -1, reverse=True), use_container_width=True, hide_index=True)
@@ -161,10 +191,11 @@ else:
         st.markdown('<div class="muted">{} · {} · {} peer companies · {} benchmark factors</div>'.format(normalize_industry(industry), normalize_fiscal_year(year), len(benchmark.get("companies", [])), len(themes)), unsafe_allow_html=True)
         matrix_path = Path("artifacts/it_ai_readiness_regression_matrix.json")
         rows = []
-        if matrix_path.exists():
-            matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
+        matrix = find_regression_matrix(benchmark)
+        if matrix.get("rows"):
+            cohort_rows = benchmark_matrix_rows(matrix, benchmark)
             for name in matrix.get("feature_names", []):
-                values = [row.get("features", {}).get(name) for row in matrix.get("rows", []) if row.get("features", {}).get(name) is not None]
+                values = [row.get("features", {}).get(name) for row in cohort_rows if row.get("features", {}).get(name) is not None]
                 if values:
                     rows.append({"TOE question": name, "Industry average (0–5)": round(sum(values) / len(values), 2)})
         overall = round(sum(row["Industry average (0–5)"] for row in rows) / len(rows) * 20, 1) if rows else None
@@ -199,9 +230,9 @@ else:
             selected_question = st.selectbox("Benchmark question", question_options, key="client_factor_question")
             selected_index = question_options.index(selected_question)
             selected_name = rows[selected_index]["TOE question"]
-            matrix = json.loads(matrix_path.read_text(encoding="utf-8")) if matrix_path.exists() else {"rows": []}
+            matrix = find_regression_matrix(benchmark)
             company_scores = []
-            for company_row in matrix.get("rows", []):
+            for company_row in benchmark_matrix_rows(matrix, benchmark):
                 raw = company_row.get("features", {}).get(selected_name)
                 company_scores.append({"Company": company_row.get("company"), "Score (0–5)": raw, "Score (0–100)": round(float(raw) * 20, 1) if raw is not None else None})
             st.dataframe(sorted(company_scores, key=lambda item: item["Score (0–5)"] if item["Score (0–5)"] is not None else -1, reverse=True), use_container_width=True, hide_index=True)

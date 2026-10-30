@@ -56,7 +56,7 @@ def list_recent_documents(settings: Settings, limit: int = 50) -> List[Tuple[str
                 cursor.execute(
                     """
                     SELECT d.document_id::text, d.document_title, c.symbol,
-                           COALESCE(d.fiscal_year, ''), d.processing_status
+                           COALESCE(c.industry, ''), COALESCE(d.fiscal_year, ''), d.processing_status
                     FROM documents d
                     JOIN companies c ON c.company_id = d.company_id
                     ORDER BY d.updated_at DESC, d.created_at DESC

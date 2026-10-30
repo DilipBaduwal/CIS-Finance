@@ -13,8 +13,17 @@ def _terms(text):
     return {x for x in re.findall(r"[a-zA-Z][a-zA-Z0-9-]{3,}", (text or '').lower()) if x not in {"this", "that", "with", "from", "company", "evidence"}}
 
 
-def discover_recurring_candidates(themes, records, minimum_company_support=2):
+def required_company_support(cohort_size):
+    """Require majority evidence, with at least two companies."""
+    if cohort_size < 1:
+        raise ValueError("cohort_size must be positive")
+    return max(2, (cohort_size + 1) // 2)
+
+
+def discover_recurring_candidates(themes, records, minimum_company_support=None, cohort_size=None):
     """Find possible new themes from chunks; candidates require review."""
+    if minimum_company_support is None:
+        minimum_company_support = required_company_support(cohort_size or len({record.get("symbol", record.get("company_symbol")) for record in records}))
     embedded = [record for record in records if record.get("embedding") and record.get("toe_dimension")]
     if len(embedded) >= 2:
         clusters = discover_theme_clusters([
@@ -45,8 +54,8 @@ def discover_recurring_candidates(themes, records, minimum_company_support=2):
     ]
 
 
-def generate_review_candidates(settings, themes, records, output_path):
-    candidates = discover_recurring_candidates(themes, records)
+def generate_review_candidates(settings, themes, records, output_path, cohort_size=None):
+    candidates = discover_recurring_candidates(themes, records, cohort_size=cohort_size)
     existing_questions = [item.get("question", "") for item in themes]
     for candidate in candidates:
         evidence = "\n".join(record.get("chunk_text", "")[:1200] for record in records if record.get("chunk_id") in candidate["chunk_ids"][:3])

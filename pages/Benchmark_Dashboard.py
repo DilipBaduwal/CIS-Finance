@@ -2,6 +2,8 @@
 import json
 import uuid
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import streamlit as st
@@ -10,15 +12,23 @@ from cis_fin.cohort_update import update_cohort
 from cis_fin.automatic_features import build_features_from_document, score_document_themes_with_llm
 from cis_fin.settings import Settings
 from cis_fin.company_queries import CompanyLookupError, export_document_chunks, list_recent_documents
-from cis_fin.benchmark_update import generate_review_candidates, approve_candidates
+from cis_fin.benchmark_update import generate_review_candidates, approve_candidates, required_company_support
 from cis_fin.benchmark_reporting import cohort_summary, question_comparison, score_deltas
 from cis_fin.benchmark_store import persist_benchmark_version, persist_benchmark_approval
+from cis_fin.benchmark import normalize_industry
+from cis_fin.pilot_regression import train_pilot
 
 st.set_page_config(page_title="Benchmark Dashboard", page_icon="📈", layout="wide")
 st.title("📈 AI-readiness benchmark")
 st.caption("Information Technology · 2025–2026 cohort")
 
-version_paths = sorted(Path("artifacts").glob("benchmark_it_2025-2026_v*.json"))
+version_paths = []
+for candidate in sorted(Path("artifacts").glob("benchmark_it_2025-2026_v*.json")):
+    candidate_data = json.loads(candidate.read_text(encoding="utf-8"))
+    # Ignore historical versions created before industry validation existed.
+    if any(company in {"TATASTEEL", "TRENT"} for company in candidate_data.get("companies", [])):
+        continue
+    version_paths.append(candidate)
 version_path = version_paths[-1] if version_paths else None
 path = Path("artifacts/it_ai_readiness_benchmark_2025-2026.final.json")
 if not path.exists():
@@ -31,8 +41,98 @@ data = json.loads(path.read_text(encoding="utf-8"))
 version_data = json.loads(version_path.read_text(encoding="utf-8")) if version_path else {}
 companies = version_data.get("companies") or data.get("companies", ["TCS", "INFY", "WIPRO"])
 themes = data.get("themes", [])
+
+
+def auto_add_completed_companies():
+    """Automatically score completed reports and add new cohort members."""
+    if not version_path or not themes:
+        return False, []
+    try:
+        documents = list_recent_documents(Settings.from_env(), limit=100)
+    except CompanyLookupError:
+        return False, ["Could not load completed documents from the database."]
+    matrix_path = Path("artifacts/it_ai_readiness_regression_matrix.json")
+    targets_path = Path("artifacts/it_ai_readiness_provisional_targets.json")
+    score_path = Path("artifacts/it_ai_readiness_pilot_regression.json")
+    if not (matrix_path.exists() and targets_path.exists() and score_path.exists()):
+        return False, ["Required regression artifacts are missing."]
+    current_version = version_data
+    current_version_path = version_path
+    changed = False
+    failures = []
+    for document in documents:
+        # list_recent_documents returns: document_id, title, symbol, year, status
+        if str(document[5] or "").lower() != "completed":
+            continue
+        symbol = str(document[2] or "").strip().upper()
+        document_industry = str(document[3] or "").strip()
+        year = document[4] or ""
+        identity = symbol
+        if not identity or identity in current_version.get("companies", []):
+            continue
+        if normalize_industry(document_industry) != normalize_industry(current_version.get("industry", "")):
+            continue
+        try:
+            records = export_document_chunks(Settings.from_env(), uuid.UUID(str(document[0])))
+            scored = score_document_themes_with_llm(Settings.from_env(), themes, records)
+            values = {name: item.get("score") for name, item in scored.items() if item.get("score") is not None}
+            if not values:
+                continue
+            next_number = int(current_version.get("version_number", 1)) + 1
+            result = update_cohort(
+                current_version_path, matrix_path, targets_path, score_path,
+                identity, current_version.get("industry", "Information Technology"), year or current_version.get("fiscal_year", "2025-2026"), values,
+                Path("artifacts/benchmark_it_2025-2026_v{}.json".format(next_number)),
+                Path("artifacts/it_ai_readiness_regression_matrix_v{}.json".format(next_number)),
+                Path("artifacts/it_ai_readiness_provisional_targets_v{}.json".format(next_number)),
+                Path("artifacts/it_ai_readiness_pilot_regression_v{}.json".format(next_number)),
+            )
+            current_version = result["version"]
+            current_version_path = Path("artifacts/benchmark_it_2025-2026_v{}.json".format(next_number))
+            matrix_path = Path("artifacts/it_ai_readiness_regression_matrix_v{}.json".format(next_number))
+            targets_path = Path("artifacts/it_ai_readiness_provisional_targets_v{}.json".format(next_number))
+            score_path = Path("artifacts/it_ai_readiness_pilot_regression_v{}.json".format(next_number))
+            changed = True
+        except Exception as exc:
+            failures.append("{}: {}".format(identity, exc))
+            continue
+    return changed, failures
+
+
+if version_data:
+    # Re-check on every dashboard rerun so a report that finishes processing
+    # after the dashboard was opened is picked up without a manual action.
+    training_started = time.perf_counter()
+    training_started_at = datetime.now().astimezone()
+    with st.status("Automatic benchmark training in progress…", expanded=True) as training_status:
+        st.write("Started: {}".format(training_started_at.strftime("%Y-%m-%d %H:%M:%S %Z")))
+        st.write("Completed companies are trained sequentially; the next company starts after the current run finishes.")
+        automatic_changed, automatic_failures = auto_add_completed_companies()
+        training_elapsed = time.perf_counter() - training_started
+        training_finished_at = datetime.now().astimezone()
+        st.write("Elapsed: {:.1f} seconds".format(training_elapsed))
+        st.write("Finished: {}".format(training_finished_at.strftime("%Y-%m-%d %H:%M:%S %Z")))
+        training_status.update(
+            label="Automatic benchmark training completed in {:.1f} seconds".format(training_elapsed),
+            state="complete",
+            expanded=False,
+        )
+    st.session_state["last_training_elapsed"] = training_elapsed
+    st.session_state["last_training_finished_at"] = training_finished_at.strftime("%Y-%m-%d %H:%M:%S %Z")
+    for failure in automatic_failures:
+        st.error("Automatic benchmark enrollment failed — {}".format(failure))
+    if automatic_changed:
+        st.success("Completed company reports were automatically scored and added to the benchmark.")
+        st.rerun()
 score_path = Path("artifacts/it_ai_readiness_pilot_regression.json")
-versioned_scores = sorted(Path("artifacts").glob("it_ai_readiness_pilot_regression_v*.json"))
+versioned_scores = []
+for candidate in sorted(Path("artifacts").glob("it_ai_readiness_pilot_regression_v*.json")):
+    try:
+        version_number = int(candidate.stem.rsplit("_v", 1)[-1])
+    except ValueError:
+        continue
+    if version_data and version_number <= int(version_data.get("version_number", 0)):
+        versioned_scores.append(candidate)
 if versioned_scores:
     score_path = versioned_scores[-1]
 score_data = json.loads(score_path.read_text(encoding="utf-8")) if score_path.exists() else {}
@@ -47,6 +147,97 @@ metrics[0].metric("Companies", len(companies))
 metrics[1].metric("Source chunks", data.get("source_chunk_count", "—"))
 metrics[2].metric("TOE themes", len(themes))
 metrics[3].metric("Regression", "Pilot active" if score_data else "Ready after features")
+
+if version_data:
+    with st.container(border=True):
+        st.subheader("Re-score the complete cohort with one consistent method")
+        st.caption("This uses the same Ollama rubric for every company and does not use deterministic fallback scores.")
+        active_matrix_path = Path("artifacts/it_ai_readiness_regression_matrix_v{}.json".format(version_data.get("version_number")))
+        if not active_matrix_path.exists():
+            active_matrix_path = Path("artifacts/it_ai_readiness_regression_matrix.json")
+        active_matrix = json.loads(active_matrix_path.read_text(encoding="utf-8"))
+        individual_company = st.selectbox(
+            "Re-score one company only",
+            [row.get("company") for row in active_matrix.get("rows", [])],
+            key="individual_rescore_company",
+        )
+        if st.button("Re-score selected company", key="rescore_selected_company"):
+            try:
+                settings = Settings.from_env()
+                documents = list_recent_documents(settings, limit=100)
+                document = next((row for row in documents if str(row[2]).strip().upper() == str(individual_company).upper() and str(row[5]).lower() == "completed"), None)
+                if not document:
+                    raise RuntimeError("No completed report found for {}.".format(individual_company))
+                matrix_path = active_matrix_path
+                matrix = active_matrix
+                target_row = next(row for row in matrix["rows"] if row.get("company") == individual_company)
+                records = export_document_chunks(settings, uuid.UUID(str(document[0])))
+                with st.spinner("Strictly re-scoring {}…".format(individual_company)):
+                    scored = score_document_themes_with_llm(settings, themes, records, strict=True)
+                for name in matrix["feature_names"]:
+                    target_row.setdefault("features", {})[name] = float(scored[name]["score"])
+                target_row["feature_vector"] = [target_row["features"].get(name) for name in matrix["feature_names"]]
+                matrix_path.write_text(json.dumps(matrix, ensure_ascii=False, indent=2), encoding="utf-8")
+                versioned_matrix_path = Path("artifacts/it_ai_readiness_regression_matrix_v{}.json".format(version_data.get("version_number")))
+                if versioned_matrix_path.exists():
+                    versioned_matrix = json.loads(versioned_matrix_path.read_text(encoding="utf-8"))
+                    versioned_row = next((row for row in versioned_matrix.get("rows", []) if row.get("company") == individual_company), None)
+                    if versioned_row is not None:
+                        versioned_row["features"] = dict(target_row["features"])
+                        versioned_row["feature_vector"] = list(target_row["feature_vector"])
+                        versioned_matrix_path.write_text(json.dumps(versioned_matrix, ensure_ascii=False, indent=2), encoding="utf-8")
+                targets_path = Path("artifacts/it_ai_readiness_provisional_targets.json")
+                target_rows = []
+                for row in matrix["rows"]:
+                    values = [float(value) for value in row.get("feature_vector", []) if value is not None]
+                    if not values:
+                        raise RuntimeError("No scored factors are available for {}.".format(row.get("company")))
+                    target_rows.append({"company": row["company"], "target_score": round(sum(values) / len(values) * 20, 1), "provisional": True})
+                targets = {"targets": target_rows, "provisional": True}
+                targets_path.write_text(json.dumps(targets, ensure_ascii=False, indent=2), encoding="utf-8")
+                train_pilot(matrix_path, targets_path, Path("artifacts/it_ai_readiness_pilot_regression.json"))
+                st.success("{} was re-scored successfully and the pilot model was retrained.".format(individual_company))
+                st.rerun()
+            except Exception as exc:
+                st.error("Individual re-scoring failed: {}".format(exc))
+        if st.button("Re-score all companies", key="rescore_entire_cohort"):
+            try:
+                settings = Settings.from_env()
+                documents = list_recent_documents(settings, limit=100)
+                matrix_path = Path("artifacts/it_ai_readiness_regression_matrix.json")
+                matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
+                by_company = {str(row[2]).strip().upper(): row for row in documents if len(row) > 5 and str(row[5]).lower() == "completed"}
+                rescored = 0
+                with st.status("Strict cohort re-scoring in progress…", expanded=True) as status:
+                    for row in matrix.get("rows", []):
+                        company = str(row.get("company", "")).upper()
+                        document = by_company.get(company)
+                        if not document:
+                            raise RuntimeError("No completed report found for {}.".format(company))
+                        records = export_document_chunks(settings, uuid.UUID(str(document[0])))
+                        scored = score_document_themes_with_llm(settings, themes, records, strict=True)
+                        for name in matrix.get("feature_names", []):
+                            row.setdefault("features", {})[name] = float(scored[name]["score"])
+                        row["feature_vector"] = [row["features"].get(name) for name in matrix.get("feature_names", [])]
+                        rescored += 1
+                        status.write("Re-scored {}".format(company))
+                    matrix["training_ready"] = False
+                    matrix_path.write_text(json.dumps(matrix, ensure_ascii=False, indent=2), encoding="utf-8")
+                    target_rows = []
+                    for row in matrix["rows"]:
+                        values = [float(value) for value in row.get("feature_vector", []) if value is not None]
+                        if not values:
+                            raise RuntimeError("No scored factors are available for {}.".format(row.get("company")))
+                        target_rows.append({"company": row["company"], "target_score": round(sum(values) / len(values) * 20, 1), "provisional": True})
+                    targets = {"targets": target_rows, "provisional": True}
+                    targets_path = Path("artifacts/it_ai_readiness_provisional_targets.json")
+                    targets_path.write_text(json.dumps(targets, ensure_ascii=False, indent=2), encoding="utf-8")
+                    train_pilot(matrix_path, targets_path, Path("artifacts/it_ai_readiness_pilot_regression.json"))
+                    status.update(label="Re-scored {} companies consistently".format(rescored), state="complete", expanded=False)
+                st.success("All cohort scores were replaced using the same strict Ollama scoring path.")
+                st.rerun()
+            except Exception as exc:
+                st.error("Cohort re-scoring stopped without partial completion: {}".format(exc))
 
 if version_data:
     with st.expander("Benchmark version history and update rules"):
@@ -71,7 +262,7 @@ if version_data:
             except CompanyLookupError:
                 saved_documents = []
             if saved_documents:
-                labels = ["{} · {} · {}".format(row[2], row[1] or "Untitled", row[3] or "year unknown") for row in saved_documents]
+                labels = ["{} · {} · {}".format(row[2], row[1] or "Untitled", row[4] or "year unknown") for row in saved_documents]
                 selected_label = st.selectbox("Use a processed report already in the database", ["Choose a report"] + labels)
                 if selected_label != "Choose a report" and st.button("Load saved chunks", key="load_saved_benchmark_report"):
                     selected_row = saved_documents[labels.index(selected_label)]
@@ -96,16 +287,32 @@ if version_data:
                 if st.button("Find recurring themes for review", key="discover_benchmark_themes"):
                     with st.spinner("Comparing the new report with existing benchmark themes…"):
                         try:
-                            generate_review_candidates(Settings.from_env(), themes, saved_records, candidate_path)
-                            st.success("Theme candidates generated. Review them below before approving.")
+                            generate_review_candidates(Settings.from_env(), themes, saved_records, candidate_path, cohort_size=len(companies) + 1)
+                            candidate_data = json.loads(candidate_path.read_text(encoding="utf-8"))
+                            candidates = candidate_data.get("candidates", [])
+                            eligible = [index for index, candidate in enumerate(candidates) if candidate.get("auto_eligible") and candidate.get("confidence", 0) >= 0.70]
+                            if eligible:
+                                next_number = int(version_data.get("version_number", 1)) + 1
+                                created = approve_candidates(
+                                    version_path,
+                                    candidate_path,
+                                    eligible,
+                                    Path("artifacts/benchmark_it_2025-2026_v{}.json".format(next_number)),
+                                )
+                                persist_benchmark_version(Settings.from_env(), created, st.session_state.get("authenticated_user"))
+                                candidate_path.unlink(missing_ok=True)
+                                st.success("Automatically approved {} strong recurring themes and created benchmark v{}.".format(len(eligible), next_number))
+                                st.rerun()
+                            else:
+                                st.info("No candidate met the automatic majority-support and quality rules.")
                         except Exception as exc:
-                            st.error("Theme discovery failed: {}".format(exc))
+                            st.error("Automatic theme discovery failed: {}".format(exc))
                 if candidate_path.exists():
                     candidate_data = json.loads(candidate_path.read_text(encoding="utf-8"))
                     candidates = candidate_data.get("candidates", [])
                     if candidates:
-                        st.markdown("#### Review recurring-theme candidates")
-                        st.caption("Candidates never change the benchmark automatically. Select only questions that are genuinely recurring and comparable across companies.")
+                        st.markdown("#### Recurring-theme candidates")
+                        st.caption("Strong candidates are approved automatically when they meet the majority-support and question-quality rules.")
                         approved_indexes = []
                         for index, candidate in enumerate(candidates):
                             label = "{} · confidence {}% · {}".format(candidate.get("question") or candidate.get("theme", "Unnamed theme"), int(float(candidate.get("confidence", 0)) * 100), "auto-eligible" if candidate.get("auto_eligible") else "manual review")
