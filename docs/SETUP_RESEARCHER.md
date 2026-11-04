@@ -5,7 +5,7 @@ The project owner must provide the repository and assigned service credentials t
 1. Install Python 3.9+ (3.11+ recommended), then create and activate a virtual environment.
 2. Install `requirements.txt`.
 3. Copy `.env.example` to `.env` and enter only the credentials assigned to you. Never commit `.env` or share secrets in chat/Git.
-4. Install and start Ollama locally. Pull both `qwen2.5:3b` and `nomic-embed-text:latest`; embeddings and question generation run locally.
+4. Install and start Ollama locally. Pull both `qwen3.5:9b` and `nomic-embed-text:latest`; embeddings and question generation run locally.
 5. Run the credential-independent tests: `PYTHONPATH=src python -m unittest discover -s tests -v`.
 6. Run the read-only checks separately: `check-db`, `check-qdrant`, and `check-storage`.
 7. Start Streamlit bound to loopback: `PYTHONPATH=src streamlit run app.py --server.address 127.0.0.1`. The UI is unauthenticated and must not be network-exposed.

@@ -35,6 +35,8 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
+For a fresh Ubuntu machine, `./scripts/setup_ubuntu.sh` creates the virtual environment and installs dependencies. After filling `.env`, run `./scripts/health_check.sh` and then apply migrations with `PYTHONPATH=src python -m cis_fin.cli migrate --apply`.
+
 Fill in `.env` using credentials supplied by the project owner. Never put secrets in source files, screenshots, tickets, or Git commits. `python-dotenv` loads `.env` for the application without overriding already-set shell environment variables.
 
 Run credential-independent unit tests:
@@ -140,11 +142,11 @@ The page bounds are optional; omitting them processes the full PDF. The document
 Install Ollama locally and pull both models:
 
 ```sh
-ollama pull qwen2.5:3b
+ollama pull qwen3.5:9b
 ollama pull nomic-embed-text:latest
 ```
 
-Set `OLLAMA_BASE_URL=http://127.0.0.1:11434`, `OLLAMA_MODEL=qwen2.5:3b`, and `OLLAMA_EMBEDDING_MODEL=nomic-embed-text:latest` in `.env`. After you submit a PDF, the application automatically processes all selected-page chunks in bounded sequential batches, saves question/evidence candidates to PostgreSQL, creates the versioned Qdrant collection if needed, and indexes vectors. Source text stays local; remote Ollama URLs are rejected. Review candidates before approving them. See [docs/GROUNDED_QUESTION_GENERATION.md](docs/GROUNDED_QUESTION_GENERATION.md).
+Set `OLLAMA_BASE_URL=http://127.0.0.1:11434`, `OLLAMA_MODEL=qwen3.5:9b`, and `OLLAMA_EMBEDDING_MODEL=nomic-embed-text:latest` in `.env`. After you submit a PDF, the application automatically processes all selected-page chunks in bounded sequential batches, saves question/evidence candidates to PostgreSQL, creates the versioned Qdrant collection if needed, and indexes vectors. Source text stays local; remote Ollama URLs are rejected. Review candidates before approving them. See [docs/GROUNDED_QUESTION_GENERATION.md](docs/GROUNDED_QUESTION_GENERATION.md).
 
 On failure, the job records a sanitized error and exponential retry time, capped at five attempts. Resume downstream question/vector processing after the reported backoff:
 
@@ -172,6 +174,8 @@ Each TOE dimension is capped at ten questions; the system does not invent filler
 Benchmark version files are written under `artifacts/benchmark_*_v*.json`. The corresponding PostgreSQL tables are `benchmark_versions` and `benchmark_approvals`. Previous versions are immutable, so adding a company creates a new version rather than rewriting historical results.
 
 The regression scores are provisional evidence-derived scores in the pilot. They should not be interpreted as financial, investment, or certification ratings.
+
+The audit implementation includes TOE-focused evidence filtering, independent audit rows with agreement metrics, confidence-aware multi-year financial ratios, index-entry page-range merging, and timestamped Markdown score traces. Migration `0009_audit_financial_trace.sql` creates the corresponding persistence tables.
 
 `reindex-document --dry-run` counts chunks that need vectors for the currently configured collection/model without writes. Omit `--dry-run` to index them. `reconcile-vectors` is read-only and compares PostgreSQL registry rows to Qdrant points for one document; use it to spot missing, untracked, or older-model records.
 

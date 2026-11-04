@@ -23,7 +23,7 @@ Verify bucket, endpoint, region, key pair, and bucket-scoped read/write permissi
 
 ## Automatic question generation fails
 
-- Confirm Ollama is running at `http://127.0.0.1:11434` and `OLLAMA_MODEL` is installed (`ollama pull qwen2.5:3b`).
+- Confirm Ollama is running at `http://127.0.0.1:11434` and `OLLAMA_MODEL` is installed (`ollama pull qwen3.5:9b`).
 - Question punctuation without a final `?` is normalized automatically. Empty questions or empty quotations are rejected; quotations not found in the source are stored as invalid and never approved.
 - Model calls run locally and sequentially. Ensure enough memory and wait for a long report to complete.
 - The job reports a sanitized stage failure and retry time. After backoff, re-upload the same PDF to resume, or run `PYTHONPATH=src python -m cis_fin.cli process-job --job-id JOB_UUID`.
