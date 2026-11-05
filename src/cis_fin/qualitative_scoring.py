@@ -30,12 +30,18 @@ def score_qualitative_evidence(settings, question, evidence, page, dimension, mo
     for attempt in range(3):
         try:
             with urlopen(request, timeout=180) as response:
-                result = json.loads(response.read())
+                raw_response = response.read().decode("utf-8", errors="replace").strip()
+                if not raw_response:
+                    raise RuntimeError("Ollama returned an empty response. Check that Ollama is running and model '{}' is installed.".format(model))
+                try:
+                    result = json.loads(raw_response)
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError("Ollama returned non-JSON output: {}".format(raw_response[:300])) from exc
             break
-        except (TimeoutError, URLError) as exc:
+        except (TimeoutError, URLError, RuntimeError) as exc:
             last_error = exc
             if attempt == 2:
-                raise TimeoutError("Ollama did not finish after 3 attempts") from exc
+                raise RuntimeError("Ollama scoring failed after 3 attempts: {}".format(exc)) from exc
             time.sleep(1)
     content = result["message"]["content"].strip()
     if "```" in content:
