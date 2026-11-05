@@ -64,7 +64,7 @@ class Settings:
             extractor=configured("CIS_FIN_EXTRACTOR") or "pymupdf",
             max_concurrent_ingestions=max_concurrent_ingestions,
             ollama_base_url=configured("OLLAMA_BASE_URL") or "http://127.0.0.1:11434",
-            ollama_model=configured("OLLAMA_MODEL") or "qwen2.5:3b",
+            ollama_model=configured("OLLAMA_MODEL") or "qwen3.5:9b",
             ollama_embedding_model=configured("OLLAMA_EMBEDDING_MODEL") or "nomic-embed-text:latest",
             qdrant_collection=qdrant_collection,
             qdrant_embedding_version=configured("QDRANT_EMBEDDING_VERSION") or "nomic-embed-text-v1",

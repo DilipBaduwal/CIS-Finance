@@ -5,7 +5,7 @@
 Question generation and embeddings use local Ollama; the implementation rejects remote Ollama endpoints so report text is not sent to an external model provider.
 
 ```sh
-ollama pull qwen2.5:3b
+ollama pull qwen3.5:9b
 ollama pull nomic-embed-text:latest
 ```
 
@@ -13,7 +13,7 @@ Set in the private `.env`:
 
 ```dotenv
 OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=qwen2.5:3b
+OLLAMA_MODEL=qwen3.5:9b
 OLLAMA_EMBEDDING_MODEL=nomic-embed-text:latest
 QDRANT_COLLECTION=cis_fin_chunks_nomic_v1
 QDRANT_EMBEDDING_VERSION=nomic-embed-text-v1

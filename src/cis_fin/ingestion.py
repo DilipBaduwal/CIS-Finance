@@ -47,6 +47,7 @@ class DocumentRequest:
     source_classification: str = "public_source"
     page_start: Optional[int] = None
     page_end: Optional[int] = None
+    page_ranges: Optional[Sequence[Tuple[int, int]]] = None
 
 
 @dataclass(frozen=True)
@@ -199,6 +200,7 @@ class PostgresIngestionStore:
                                     "object_key": object_key,
                                     "selected_page_start": request.page_start or 1,
                                     "selected_page_end": request.page_end,
+                                    "selected_page_ranges": request.page_ranges,
                                 }
                             ),
                         ),
@@ -395,6 +397,7 @@ class PostgresIngestionStore:
                             source_classification=source_classification,
                             page_start=checkpoint.get("selected_page_start"),
                             page_end=checkpoint.get("selected_page_end"),
+                            page_ranges=checkpoint.get("selected_page_ranges"),
                         ),
                         document_id,
                     )
@@ -669,18 +672,26 @@ def run_extraction_job(
         store.mark_stored(job_id, registration.object_key)
 
         total_page_count = pdf_page_count(request.path)
-        page_start = request.page_start or 1
-        page_end = request.page_end or total_page_count
+        ranges = request.page_ranges
+        if ranges:
+            ranges = [(int(start), int(end)) for start, end in ranges]
+            if any(start < 1 or end < start or end > total_page_count for start, end in ranges):
+                raise ExtractionError("One or more selected page ranges are outside the PDF.")
+            page_start, page_end = min(item[0] for item in ranges), max(item[1] for item in ranges)
+        else:
+            page_start = request.page_start or 1
+            page_end = request.page_end or total_page_count
         if page_start < 1 or page_end < page_start or page_end > total_page_count:
             raise ExtractionError(
                 "Selected page range must be between 1 and {}.".format(total_page_count)
             )
-        pages = stream_pdf_pages(
-            request.path,
-            request.engine,
-            page_start=page_start,
-            page_end=page_end,
-        )
+        if ranges:
+            def selected_pages():
+                for start, end in ranges:
+                    yield from stream_pdf_pages(request.path, request.engine, page_start=start, page_end=end)
+            pages = selected_pages()
+        else:
+            pages = stream_pdf_pages(request.path, request.engine, page_start=page_start, page_end=page_end)
         nonempty_chars = 0
         extracted_pages = 0
 
@@ -754,8 +765,15 @@ def ingest_pdf(
     if request.path.suffix.lower() != ".pdf":
         raise IngestionError("Input must be a PDF file.")
     page_count = pdf_page_count(request.path)
-    page_start = request.page_start or 1
-    page_end = request.page_end or page_count
+    ranges = request.page_ranges
+    if ranges:
+        ranges = [(int(start), int(end)) for start, end in ranges]
+        if any(start < 1 or end < start or end > page_count for start, end in ranges):
+            raise IngestionError("One or more selected page ranges are outside the PDF.")
+        page_start, page_end = min(item[0] for item in ranges), max(item[1] for item in ranges)
+    else:
+        page_start = request.page_start or 1
+        page_end = request.page_end or page_count
     if page_start < 1 or page_end < page_start or page_end > page_count:
         raise IngestionError("Selected page range must be between 1 and {}.".format(page_count))
     checksum = file_sha256(request.path)

@@ -21,7 +21,7 @@ COMPANY_TERMS = ["reliance", "jio", "ril", "rjil", "ambani", "o2c", "jiomart"]
 
 path = sys.argv[1]
 count = int(sys.argv[2]) if len(sys.argv) > 2 else 3
-model = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b")
+model = os.environ.get("OLLAMA_MODEL", "qwen3.5:9b")
 base_url = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 
 generator = OllamaQuestionGenerator(base_url, model, timeout_seconds=300)

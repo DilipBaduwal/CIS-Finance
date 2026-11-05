@@ -19,7 +19,8 @@ from cis_fin.company_queries import (
 )
 from cis_fin.companies import register_detected_company
 from cis_fin.connectivity import check_database, check_qdrant, check_storage
-from cis_fin.extraction import ExtractionError, available_extractors, pdf_page_count
+from cis_fin.extraction import ExtractionError, available_extractors, pdf_page_count, stream_pdf_pages
+from cis_fin.page_index import detect_index_entries, merge_page_ranges
 from cis_fin.ingestion import (
     DocumentRequest,
     IngestionError,
@@ -36,13 +37,13 @@ from cis_fin.pipeline import (
 )
 from cis_fin.auth import authenticate, configured_users
 from cis_fin.question_review import QuestionReviewError, edit_question_candidate
-from cis_fin.report_metadata import ReportMetadataError, suggest_report_metadata
+from cis_fin.report_metadata import ReportMetadataError, suggest_report_metadata, extract_basic_report_metadata
 from cis_fin.nifty_lookup import (
     NiftyLookupError,
-    fallback_ticker,
-    find_local_company_hint,
+    find_master_equity_hint,
+    find_master_equity_in_text,
+    lookup_master_equity,
     lookup_local_nifty500,
-    lookup_nifty50,
 )
 from cis_fin.settings import Settings
 from cis_fin.storage import ObjectStoreError, S3ObjectStore
@@ -274,6 +275,7 @@ uploaded_pdf = st.file_uploader(
     help="Maximum upload size is 100 MB per PDF.",
 )
 inspected_page_count = None
+detected_index_entries = []
 if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
     uploaded_bytes = uploaded_pdf.getvalue()
     upload_checksum = hashlib.sha256(uploaded_bytes).hexdigest()
@@ -283,6 +285,11 @@ if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
             with inspect_path.open("wb") as target:
                 target.write(uploaded_bytes)
             inspected_page_count = pdf_page_count(inspect_path)
+            # The temporary PDF must still exist while the index is read.
+            index_pages = stream_pdf_pages(inspect_path, engine="pymupdf", page_start=1, page_end=min(20, inspected_page_count))
+            detected_index_entries = detect_index_entries(index_pages)
+            st.session_state["detected_index_entries"] = detected_index_entries
+            st.session_state["index_analysis_checksum"] = upload_checksum
         st.caption("PDF contains {} pages.".format(inspected_page_count))
         if st.session_state.get("metadata_analysis_checksum") != upload_checksum:
             st.session_state["metadata_analysis_checksum"] = upload_checksum
@@ -296,21 +303,37 @@ if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
                     analysis_path = Path(temp_dir) / "report.pdf"
                     analysis_path.write_bytes(uploaded_bytes)
                     with st.spinner("Reading report details locally with {}…".format(settings.ollama_model)):
-                        metadata = suggest_report_metadata(
-                            analysis_path,
-                            settings.ollama_base_url,
-                            settings.ollama_model,
-                        )
-                filename_company = None
+                        try:
+                            metadata = suggest_report_metadata(analysis_path, settings.ollama_base_url, settings.ollama_model, page_limit=10)
+                        except ReportMetadataError as model_error:
+                            metadata = extract_basic_report_metadata(analysis_path, uploaded_pdf.name)
+                            st.session_state["metadata_analysis_error"] = "Automatic model metadata was unavailable; opening-page extraction was used: {}".format(model_error)
+                    opening_pages = list(stream_pdf_pages(analysis_path, "pymupdf", 1, min(10, inspected_page_count)))
+                    opening_text = "\n".join(page.text for page in opening_pages)
+                    company_opening_text = "\n".join(page.text for page in opening_pages[:2])
+                master_company = None
                 try:
-                    filename_company = find_local_company_hint(uploaded_pdf.name)
+                    master_company = find_master_equity_in_text(company_opening_text)
                 except NiftyLookupError:
-                    pass
+                    try:
+                        master_company = lookup_master_equity(metadata.company_name, metadata.ticker_symbol)
+                    except NiftyLookupError:
+                        try:
+                            master_company = lookup_local_nifty500(metadata.company_name, metadata.ticker_symbol)
+                        except NiftyLookupError:
+                            try:
+                                master_company = find_master_equity_hint(uploaded_pdf.name)
+                            except NiftyLookupError:
+                                try:
+                                    master_company = lookup_local_nifty500(uploaded_pdf.name)
+                                except NiftyLookupError:
+                                    pass
+                reference_company = master_company
                 detected = {
-                    "company_name_input": filename_company.company_name if filename_company else metadata.company_name,
-                    "ticker_symbol_input": filename_company.symbol if filename_company else metadata.ticker_symbol,
-                    "sector_input": metadata.sector,
-                    "industry_input": filename_company.industry if filename_company else metadata.industry,
+                    "company_name_input": reference_company.company_name if reference_company else metadata.company_name,
+                    "ticker_symbol_input": reference_company.symbol if reference_company else metadata.ticker_symbol,
+                    "sector_input": reference_company.sector if reference_company else metadata.sector,
+                    "industry_input": reference_company.industry if reference_company else metadata.industry,
                     "document_title_input": metadata.document_title or uploaded_pdf.name.rsplit(".", 1)[0],
                     "document_type_input": (
                         metadata.document_type
@@ -327,34 +350,13 @@ if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
                     ),
                     "fiscal_year_input": metadata.fiscal_year,
                 }
-                # Verify/fill company fields from official exchange sources. This runs
-                # even when the model supplied values, since its classifications may be wrong.
-                if detected["company_name_input"]:
-                    try:
-                        company = lookup_local_nifty500(
-                            detected["company_name_input"], detected["ticker_symbol_input"]
-                        )
-                        detected["ticker_symbol_input"] = company.symbol
-                        if company.industry:
-                            detected["industry_input"] = company.industry
-                        st.session_state["nifty_lookup_source"] = "data/nifty500.csv"
-                        st.session_state["nse_classification_source"] = "Nifty 500 local reference snapshot"
-                        st.session_state["nifty_lookup_match"] = company.company_name
-                    except NiftyLookupError as exc:
-                        try:
-                            company = lookup_nifty50(
-                                detected["company_name_input"], detected["ticker_symbol_input"]
-                            )
-                            detected["ticker_symbol_input"] = company.symbol
-                            if company.industry:
-                                detected["industry_input"] = company.industry
-                            st.session_state["nifty_lookup_source"] = company.source_url
-                            st.session_state["nse_classification_source"] = company.classification_source_url
-                            st.session_state["nifty_lookup_match"] = company.company_name
-                        except NiftyLookupError as live_exc:
-                            st.session_state["nifty_lookup_error"] = str(live_exc)
-                            if not detected["ticker_symbol_input"]:
-                                detected["ticker_symbol_input"] = fallback_ticker(metadata.company_name)
+                if master_company:
+                    # The supplied MasterEquity file is the authoritative local
+                    # company reference for this workflow; do not replace its NSE
+                    # preferred/BSE fallback symbol with a remote lookup.
+                    st.session_state["nifty_lookup_source"] = str(master_company.source_url)
+                    st.session_state["nse_classification_source"] = "BSE/NSE MasterEquity list"
+                    st.session_state["nifty_lookup_match"] = master_company.company_name
                 for key, value in detected.items():
                     st.session_state[key] = value
                 st.session_state["metadata_analysis_complete"] = True
@@ -383,8 +385,8 @@ elif uploaded_pdf and st.session_state.get("metadata_analysis_complete"):
             st.session_state["metadata_analysis_complete"] = False
             st.rerun()
 if uploaded_pdf and st.session_state.get("nifty_lookup_match"):
-    st.info(
-        "Verified {} against Nifty 50, then searched market-information pages for sector and industry. "
+            st.info(
+        "Verified {} against the local BSE/NSE MasterEquity list. "
         "Sources: Nifty constituents — {}; web classifications — {}. "
         "Review the values before submitting.".format(
             st.session_state["nifty_lookup_match"],
@@ -398,33 +400,43 @@ elif uploaded_pdf and st.session_state.get("nifty_lookup_error"):
 if uploaded_pdf and inspected_page_count:
     st.markdown('<div class="section-label">Step 2 · Select pages</div>', unsafe_allow_html=True)
     page_widget_key = "{}:{}".format(uploaded_pdf.name, uploaded_pdf.size)
-    lower_column, upper_column = st.columns(2)
-    with lower_column:
-        selected_page_start = st.number_input(
-            "First page to process",
-            min_value=1,
-            max_value=inspected_page_count,
-            value=1,
-            step=1,
-            key="page_start_" + page_widget_key,
-        )
-    with upper_column:
-        selected_page_end = st.number_input(
-            "Last page to process",
-            min_value=1,
-            max_value=inspected_page_count,
-            value=inspected_page_count,
-            step=1,
-            key="page_end_" + page_widget_key,
-        )
-    st.caption(
-        "Only pages {}–{} will be extracted and chunked. Citations retain their original PDF page numbers.".format(
-            selected_page_start, selected_page_end
-        )
-    )
+    detected_index_entries = st.session_state.get("detected_index_entries", [])
+    chunking_mode = st.radio("Page chunking method", options=("Page number range", "Table of contents / index"), horizontal=True, key="chunking_mode_" + page_widget_key)
+    selected_ranges = []
+    if chunking_mode == "Table of contents / index" and detected_index_entries:
+        st.info("Index/contents entries were detected. Select one or more sections; only their PDF page ranges will be chunked.")
+        for index, entry in enumerate(detected_index_entries):
+            checked = st.checkbox(
+                "{} · PDF pages {}–{} (contents page {})".format(entry.title, entry.start_page, entry.end_page, entry.index_page),
+                key="index_entry_{}_{}".format(page_widget_key, index),
+            )
+            if checked:
+                selected_ranges.append((entry.start_page, entry.end_page))
+        if selected_ranges:
+            selected_ranges = merge_page_ranges(selected_ranges)
+            selected_page_start = selected_ranges[0][0]
+            selected_page_end = selected_ranges[-1][1]
+            st.success("Selected ranges: {}. Overlapping ranges were merged.".format(", ".join("{}–{}".format(a, b) for a, b in selected_ranges)))
+        else:
+            selected_page_start = 1
+            selected_page_end = inspected_page_count
+            st.caption("No index entry selected yet; the manual page range below will be used.")
+    elif chunking_mode == "Table of contents / index":
+        st.caption("No contents page was detected in the first 20 pages. Use the manual range below.")
+        selected_page_start = 1
+        selected_page_end = inspected_page_count
+    if chunking_mode == "Page number range" or not detected_index_entries:
+        lower_column, upper_column = st.columns(2)
+        with lower_column:
+            selected_page_start = st.number_input("First page to process", min_value=1, max_value=inspected_page_count, value=1, step=1, key="page_start_" + page_widget_key)
+        with upper_column:
+            selected_page_end = st.number_input("Last page to process", min_value=1, max_value=inspected_page_count, value=inspected_page_count, step=1, key="page_end_" + page_widget_key)
+    st.caption("Only pages {}–{} will be extracted and chunked. Citations retain their original PDF page numbers.".format(selected_page_start, selected_page_end))
+    selected_page_ranges = selected_ranges or [(int(selected_page_start), int(selected_page_end))]
 else:
     selected_page_start = None
     selected_page_end = None
+    selected_page_ranges = None
 
 with st.form("pdf_ingestion_form", clear_on_submit=False):
     st.markdown('<div class="step-card"><strong>Step 2 · Confirm report details</strong><br><small>These values are suggested from the first pages. Review them before processing.</small></div>', unsafe_allow_html=True)
@@ -519,6 +531,7 @@ if submitted:
                     source_classification=source_classification,
                     page_start=int(selected_page_start),
                     page_end=int(selected_page_end),
+                    page_ranges=selected_page_ranges,
                 )
                 postgres_store = PostgresIngestionStore(settings)
                 object_store = S3ObjectStore(settings)

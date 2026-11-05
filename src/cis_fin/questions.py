@@ -103,7 +103,7 @@ class OllamaQuestionGenerator:
     def __init__(
         self,
         base_url: str = "http://127.0.0.1:11434",
-        model: str = "qwen2.5:3b",
+        model: str = "qwen3.5:9b",
         timeout_seconds: int = 180,
     ) -> None:
         parsed = urlsplit(base_url)

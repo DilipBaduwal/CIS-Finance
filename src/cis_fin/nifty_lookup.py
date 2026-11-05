@@ -37,7 +37,13 @@ KNOWN_TICKER_FALLBACKS = {
     "tata steel": "TATASTEEL",
 }
 
+COMPANY_NAME_ALIASES = {
+    "hcltech": "hcl technologies",
+    "hcl technologies": "hcl technologies",
+}
+
 LOCAL_NIFTY500_PATH = Path(__file__).resolve().parents[2] / "data" / "nifty500.csv"
+MASTER_EQUITY_PATH = Path(__file__).resolve().parents[3] / "BSE NSE MasterEquity list.csv"
 
 
 def _normalize_name(value: str) -> str:
@@ -48,6 +54,82 @@ def _normalize_name(value: str) -> str:
     while tokens and tokens[-1] in {"limited", "ltd", "company", "co", "corporation", "corp"}:
         tokens.pop()
     return " ".join(tokens)
+
+
+def _name_alias(value: str) -> str:
+    normalized = _normalize_name(value)
+    return COMPANY_NAME_ALIASES.get(normalized, normalized)
+
+def lookup_master_equity(company_name: str = "", symbol: str = "") -> NiftyCompany:
+    """Look up company master data, preferring NSE code and falling back to BSE code."""
+    if not MASTER_EQUITY_PATH.exists():
+        raise NiftyLookupError("The BSE/NSE MasterEquity list is not available.")
+    wanted_name = _name_alias(company_name)
+    wanted_symbol = symbol.strip().upper()
+    try:
+        with MASTER_EQUITY_PATH.open(newline="", encoding="utf-8-sig") as source:
+            matches = []
+            for row in csv.DictReader(source):
+                name = (row.get("Issuer Name") or "").strip()
+                bse = (row.get("BSE Code") or "").strip().upper()
+                nse = (row.get("NSE Code") or "").strip().upper()
+                if not name:
+                    continue
+                if (wanted_name and _name_alias(name) == wanted_name) or (wanted_symbol and wanted_symbol in {nse, bse}):
+                    matches.append((name, nse, bse, row))
+            if matches:
+                preferred = next((item for item in matches if item[1]), matches[0])
+                name, nse, bse, row = preferred
+                # The file commonly stores classification on the BSE row and
+                # the NSE code on a second duplicate row. Merge both rows.
+                sector = next(((item[3].get("Sector Name") or "").strip() for item in matches if (item[3].get("Sector Name") or "").strip()), "")
+                industry = next(((item[3].get("Industry Name") or "").strip() for item in matches if (item[3].get("Industry Name") or "").strip()), "")
+                return NiftyCompany(name, nse or bse, industry, sector, str(MASTER_EQUITY_PATH))
+    except (OSError, csv.Error) as exc:
+        raise NiftyLookupError("Could not read the BSE/NSE MasterEquity list.") from exc
+    raise NiftyLookupError("No exact company-name or NSE/BSE symbol match was found in the MasterEquity list.")
+
+def find_master_equity_hint(text: str) -> NiftyCompany:
+    """Find a conservative master-list match in a PDF filename or label."""
+    normalized = _normalize_name(text)
+    if not normalized:
+        raise NiftyLookupError("No company hint was provided.")
+    if not MASTER_EQUITY_PATH.exists():
+        raise NiftyLookupError("The BSE/NSE MasterEquity list is not available.")
+    with MASTER_EQUITY_PATH.open(newline="", encoding="utf-8-sig") as source:
+        for row in csv.DictReader(source):
+            name = (row.get("Issuer Name") or "").strip()
+            tokens = _normalize_name(name).split()
+            if tokens and ((len(tokens) == 1 and tokens[0] in normalized.split()) or all(token in normalized.split() for token in tokens)):
+                return lookup_master_equity(name)
+    raise NiftyLookupError("No company hint matched the BSE/NSE MasterEquity list.")
+
+def find_master_equity_in_text(text: str) -> NiftyCompany:
+    """Match a company name printed in the opening pages of a report."""
+    normalized = _normalize_name(text)
+    if not normalized:
+        raise NiftyLookupError("No report text was provided.")
+    if not MASTER_EQUITY_PATH.exists():
+        raise NiftyLookupError("The BSE/NSE MasterEquity list is not available.")
+    with MASTER_EQUITY_PATH.open(newline="", encoding="utf-8-sig") as source:
+        candidates = []
+        for row in csv.DictReader(source):
+            name = (row.get("Issuer Name") or "").strip()
+            phrase = _name_alias(name)
+            # Require the issuer name to occur as one contiguous phrase. The
+            # previous token-by-token match could combine words from unrelated
+            # companies mentioned in an annual report.
+            aliases = {phrase, _normalize_name(name)}
+            if any(" " + candidate + " " in " " + normalized + " " for candidate in aliases if len(candidate.split()) >= 1):
+                padded_text = " " + normalized + " "
+                positions = [padded_text.find(" " + candidate + " ") for candidate in aliases]
+                position = min((p for p in positions if p >= 0), default=-1)
+                if position >= 0:
+                    candidates.append((position, -len(phrase), name))
+        if candidates:
+            candidates.sort()
+            return lookup_master_equity(candidates[0][2])
+    raise NiftyLookupError("No company name in the opening report pages matched the MasterEquity list.")
 
 
 def fallback_ticker(company_name: str) -> str:

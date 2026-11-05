@@ -16,7 +16,7 @@ class ExtractedMetric:
     confidence: float
 
 
-def extract_metric(settings, question, evidence, page, model="qwen2.5:3b"):
+def extract_metric(settings, question, evidence, page, model="qwen3.5:9b"):
     prompt = (
         "Extract only a directly disclosed, comparable metric from this annual-report evidence for the question. "
         "If no numeric or clearly gradable evidence exists, return found=false. Do not infer or invent values. "
