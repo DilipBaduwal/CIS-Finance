@@ -4,6 +4,7 @@ import hashlib
 import tempfile
 import uuid
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,7 +38,13 @@ from cis_fin.pipeline import (
 )
 from cis_fin.auth import authenticate, configured_users
 from cis_fin.question_review import QuestionReviewError, edit_question_candidate
-from cis_fin.report_metadata import ReportMetadataError, suggest_report_metadata, extract_basic_report_metadata
+from cis_fin.report_metadata import (
+    ReportMetadataError,
+    extract_basic_report_metadata,
+    extract_basic_workbook_metadata,
+    suggest_report_metadata,
+    suggest_workbook_metadata,
+)
 from cis_fin.nifty_lookup import (
     NiftyLookupError,
     find_master_equity_hint,
@@ -256,6 +263,7 @@ st.caption(
     "Choose a PDF from your browser. It is sent to this local Streamlit server, then stored in the configured "
     "object-storage bucket and its metadata/chunks are written to PostgreSQL only after you submit."
 )
+st.caption("Company and report details are read directly from the configured local Excel workbook. The PDF remains the source document for ingestion.")
 engine = st.selectbox(
     "Extraction engine",
     options=available_extractors(),
@@ -274,6 +282,80 @@ uploaded_pdf = st.file_uploader(
     accept_multiple_files=False,
     help="Maximum upload size is 100 MB per PDF.",
 )
+project_root = Path(__file__).resolve().parent
+configured_workbook = os.environ.get("CIS_FIN_METADATA_WORKBOOK", "").strip()
+metadata_workbook_path = Path(configured_workbook).expanduser() if configured_workbook else Path("data/company_metadata.xlsx")
+if not metadata_workbook_path.is_absolute():
+    metadata_workbook_path = project_root / metadata_workbook_path
+
+workbook_metadata_ready = False
+if metadata_workbook_path.is_file():
+    workbook_signature = (metadata_workbook_path.stat().st_size, metadata_workbook_path.stat().st_mtime_ns)
+    if metadata_workbook_path.suffix.lower() != ".xlsx":
+        st.error("CIS_FIN_METADATA_WORKBOOK must point to an .xlsx file; legacy .xls is not supported.")
+    elif workbook_signature[0] > 20 * 1024 * 1024:
+        st.error("The local Excel metadata workbook exceeds the 20 MB limit.")
+    else:
+        if st.session_state.get("workbook_metadata_signature") != workbook_signature:
+            st.session_state["workbook_metadata_signature"] = workbook_signature
+            st.session_state["metadata_analysis_error"] = None
+            st.session_state["metadata_analysis_complete"] = False
+            st.session_state.pop("nifty_lookup_source", None)
+            st.session_state.pop("nse_classification_source", None)
+            st.session_state.pop("nifty_lookup_match", None)
+            st.session_state.pop("workbook_metadata_warning", None)
+            try:
+                try:
+                    with st.spinner("Reading local Excel workbook with {}…".format(settings.ollama_model)):
+                        metadata = suggest_workbook_metadata(
+                            metadata_workbook_path,
+                            settings.ollama_base_url,
+                            settings.ollama_model,
+                        )
+                except ReportMetadataError as model_error:
+                    metadata = extract_basic_workbook_metadata(metadata_workbook_path, metadata_workbook_path.name)
+                    st.session_state["workbook_metadata_warning"] = (
+                        "Ollama metadata was unavailable; labeled spreadsheet cells were used where possible: {}".format(model_error)
+                    )
+                detected = {
+                    "company_name_input": metadata.company_name,
+                    "ticker_symbol_input": metadata.ticker_symbol,
+                    "sector_input": metadata.sector,
+                    "industry_input": metadata.industry,
+                    "document_title_input": metadata.document_title or metadata_workbook_path.stem,
+                    "document_type_input": (
+                        metadata.document_type
+                        if metadata.document_type in (
+                            "annual_report",
+                            "integrated_report",
+                            "sustainability_report",
+                            "investor_presentation",
+                            "earnings_call_transcript",
+                            "official_disclosure",
+                            "other",
+                        )
+                        else "annual_report"
+                    ),
+                    "fiscal_year_input": metadata.fiscal_year,
+                }
+                for key, value in detected.items():
+                    st.session_state[key] = value
+                st.session_state["workbook_metadata_complete"] = True
+            except ReportMetadataError as exc:
+                st.session_state["workbook_metadata_warning"] = str(exc)
+                st.session_state["workbook_metadata_complete"] = False
+
+        workbook_metadata_ready = bool(st.session_state.get("workbook_metadata_complete"))
+        st.caption("Local metadata workbook: {}".format(metadata_workbook_path))
+        if st.session_state.get("workbook_metadata_warning"):
+            st.warning("Excel metadata note: {}".format(st.session_state["workbook_metadata_warning"]))
+        elif workbook_metadata_ready:
+            st.success("Company and report details were read from the local Excel workbook. Review the values before submission.")
+else:
+    st.info(
+        "No local Excel metadata workbook was found at {}. Place the workbook there or set "
+        "CIS_FIN_METADATA_WORKBOOK in .env to its path; no Excel upload is used.".format(metadata_workbook_path)
+    )
 inspected_page_count = None
 detected_index_entries = []
 if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
@@ -291,7 +373,7 @@ if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
             st.session_state["detected_index_entries"] = detected_index_entries
             st.session_state["index_analysis_checksum"] = upload_checksum
         st.caption("PDF contains {} pages.".format(inspected_page_count))
-        if st.session_state.get("metadata_analysis_checksum") != upload_checksum:
+        if not workbook_metadata_ready and st.session_state.get("metadata_analysis_checksum") != upload_checksum:
             st.session_state["metadata_analysis_checksum"] = upload_checksum
             st.session_state.pop("nifty_lookup_source", None)
             st.session_state.pop("nse_classification_source", None)
@@ -368,12 +450,12 @@ if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
 elif uploaded_pdf:
     st.error("This PDF exceeds the 100 MB per-file limit.")
 
-if uploaded_pdf and st.session_state.get("metadata_analysis_error"):
+if uploaded_pdf and not workbook_metadata_ready and st.session_state.get("metadata_analysis_error"):
     st.warning(
         "Automatic metadata detection did not finish: {} You can enter the report details below; "
         "this does not prevent local PDF extraction.".format(st.session_state["metadata_analysis_error"])
     )
-elif uploaded_pdf and st.session_state.get("metadata_analysis_complete"):
+elif uploaded_pdf and not workbook_metadata_ready and st.session_state.get("metadata_analysis_complete"):
     st.success(
         "Company and report details were suggested from the first four pages using local Ollama. "
         "Please review and correct them before submission. Sector and industry are suggestions, not verified classifications."
@@ -384,6 +466,7 @@ elif uploaded_pdf and st.session_state.get("metadata_analysis_complete"):
             st.session_state.pop("metadata_analysis_checksum", None)
             st.session_state["metadata_analysis_complete"] = False
             st.rerun()
+
 if uploaded_pdf and st.session_state.get("nifty_lookup_match"):
             st.info(
         "Verified {} against the local BSE/NSE MasterEquity list. "
@@ -439,7 +522,7 @@ else:
     selected_page_ranges = None
 
 with st.form("pdf_ingestion_form", clear_on_submit=False):
-    st.markdown('<div class="step-card"><strong>Step 2 · Confirm report details</strong><br><small>These values are suggested from the first pages. Review them before processing.</small></div>', unsafe_allow_html=True)
+    st.markdown('<div class="step-card"><strong>Step 2 · Confirm report details</strong><br><small>These values may be suggested from the Excel workbook or PDF. Review them before processing.</small></div>', unsafe_allow_html=True)
     left, right = st.columns(2, gap="large")
     with left:
         company_name = st.text_input("Company name", key="company_name_input")

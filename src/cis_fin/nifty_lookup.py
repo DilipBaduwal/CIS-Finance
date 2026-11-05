@@ -43,7 +43,7 @@ COMPANY_NAME_ALIASES = {
 }
 
 LOCAL_NIFTY500_PATH = Path(__file__).resolve().parents[2] / "data" / "nifty500.csv"
-MASTER_EQUITY_PATH = Path(__file__).resolve().parents[3] / "BSE NSE MasterEquity list.csv"
+MASTER_EQUITY_PATH = Path(__file__).resolve().parents[2] / "BSE NSE MasterEquity list.csv"
 
 
 def _normalize_name(value: str) -> str:

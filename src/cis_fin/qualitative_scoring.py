@@ -15,6 +15,21 @@ RUBRIC = {
 }
 
 
+def _parse_ollama_score(response_body):
+    result = json.loads(response_body) if isinstance(response_body, (bytes, bytearray, str)) else response_body
+    message = result.get("message") if isinstance(result, dict) else None
+    content = message.get("content", "").strip() if isinstance(message, dict) else ""
+    if not content:
+        if result.get("done_reason") == "length":
+            raise ValueError("Ollama reached its output token limit before returning a score. Disable thinking or increase num_predict.")
+        raise ValueError("Ollama returned an empty scoring response; check that the configured model supports structured JSON output.")
+    content = content.replace("```json", "").replace("```", "").strip()
+    scored = json.loads(content)
+    if not isinstance(scored, dict):
+        raise ValueError("Ollama scoring response must be a JSON object.")
+    return scored, result
+
+
 def score_qualitative_evidence(settings, question, evidence, page, dimension, model=None):
     model = model or settings.ollama_model
     prompt = (
@@ -24,7 +39,7 @@ def score_qualitative_evidence(settings, question, evidence, page, dimension, mo
         "Rubric: {} Evidence: {}"
     ).format(dimension, question[:400], page, json.dumps(RUBRIC), evidence[:1400])
     schema = {"type": "object", "properties": {"score": {"type": "integer", "minimum": 0, "maximum": 5}, "rationale": {"type": "string"}, "evidence_quote": {"type": "string"}, "confidence": {"type": "number"}}, "required": ["score", "rationale", "evidence_quote", "confidence"]}
-    body = {"model": model, "stream": False, "format": schema, "options": {"temperature": 0, "num_predict": 256, "num_ctx": 2048}, "messages": [{"role": "user", "content": prompt}]}
+    body = {"model": model, "stream": False, "think": False, "format": schema, "options": {"temperature": 0, "num_predict": 512, "num_ctx": 2048}, "messages": [{"role": "user", "content": prompt}]}
     request = Request(settings.ollama_base_url.rstrip("/") + "/api/chat", data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
     last_error = None
     for attempt in range(3):
@@ -43,28 +58,29 @@ def score_qualitative_evidence(settings, question, evidence, page, dimension, mo
             if attempt == 2:
                 raise RuntimeError("Ollama scoring failed after 3 attempts: {}".format(exc)) from exc
             time.sleep(1)
-    content = result["message"]["content"].strip()
-    if "```" in content:
-        content = content.replace("```json", "").replace("```", "").strip()
     try:
-        scored = json.loads(content)
-    except json.JSONDecodeError as parse_error:
+        scored, result = _parse_ollama_score(result)
+    except (json.JSONDecodeError, ValueError) as parse_error:
         # Retry malformed/truncated local-model output with a compact response.
         retry_body = dict(body)
-        retry_body["options"] = {"temperature": 0, "num_predict": 512, "num_ctx": 2048}
+        retry_body["options"] = {"temperature": 0, "num_predict": 768, "num_ctx": 2048}
         retry_body["messages"] = [{"role": "user", "content": prompt + " Return compact JSON with short strings only."}]
+        last_result = result
         for _ in range(2):
             retry_request = Request(settings.ollama_base_url.rstrip("/") + "/api/chat", data=json.dumps(retry_body).encode(), headers={"Content-Type": "application/json"}, method="POST")
             with urlopen(retry_request, timeout=180) as response:
                 retry_result = json.loads(response.read())
-            retry_content = retry_result["message"]["content"].strip().replace("```json", "").replace("```", "").strip()
+            last_result = retry_result
             try:
-                scored = json.loads(retry_content)
+                scored, result = _parse_ollama_score(retry_result)
                 break
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, ValueError) as retry_error:
+                parse_error = retry_error
                 continue
         else:
-            raise parse_error
+            if not last_result.get("message", {}).get("content", "").strip() and last_result.get("done_reason") == "length":
+                raise ValueError("Ollama reached its output token limit on every scoring attempt; the model did not return JSON.") from parse_error
+            raise ValueError("Ollama returned invalid JSON on every scoring attempt; check the local model response.") from parse_error
     scored["score"] = int(float(scored["score"]))
     scored["confidence"] = max(0.0, min(1.0, float(scored["confidence"])))
     return scored

@@ -51,7 +51,13 @@ from cis_fin.vector_index import (
     VectorIndexError,
     index_document_chunks,
 )
-from cis_fin.report_metadata import ReportMetadataError, suggest_report_metadata
+from cis_fin.report_metadata import (
+    ReportMetadataError,
+    extract_basic_workbook_metadata,
+    suggest_report_metadata,
+    suggest_workbook_metadata,
+)
+from cis_fin.nifty_lookup import MASTER_EQUITY_PATH
 from pathlib import Path
 
 
@@ -69,7 +75,7 @@ class SettingsTests(unittest.TestCase):
         settings = Settings.from_env({"DATABASE_URL": " postgresql://host/db "})
         self.assertEqual(settings.database_url, "postgresql://host/db")
         self.assertEqual(settings.extractor, "pymupdf")
-        self.assertEqual(settings.ollama_model, "qwen2.5:3b")
+        self.assertEqual(settings.ollama_model, "qwen3.5:9b")
 
     def test_extractor_can_be_selected_by_environment(self):
         settings = Settings.from_env({"CIS_FIN_EXTRACTOR": "docling"})
@@ -101,6 +107,12 @@ class SettingsTests(unittest.TestCase):
         local = secure_postgres_dsn("postgresql://user:pass@localhost/db")
         self.assertNotIn("sslmode", local)
         self.assertIn("connect_timeout=10", local)
+
+
+class MasterEquityLookupTests(unittest.TestCase):
+    def test_master_equity_csv_path_is_repository_root(self):
+        repository_root = Path(__file__).resolve().parents[1]
+        self.assertEqual(MASTER_EQUITY_PATH, repository_root / "BSE NSE MasterEquity list.csv")
 
 
 class SafeConnectivityTests(unittest.TestCase):
@@ -289,6 +301,7 @@ class MigrationFileTests(unittest.TestCase):
                 "0006_auto_detected_company_profiles.sql",
                 "0007_question_generation_failure_retries.sql",
                 "0008_benchmark_versions.sql",
+                "0009_audit_financial_trace.sql",
             ],
         )
 
@@ -1059,6 +1072,86 @@ class ReportMetadataTests(unittest.TestCase):
     def test_metadata_suggestions_reject_remote_model_endpoint(self):
         with self.assertRaisesRegex(ReportMetadataError, "local Ollama URL"):
             suggest_report_metadata(Path("unused.pdf"), "https://remote.example.test", "qwen2.5:3b")
+
+    def test_workbook_metadata_reads_labeled_cells_without_ollama(self):
+        from openpyxl import Workbook
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "company-data.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Company details"
+            sheet.append(["Company Name", "Acme Manufacturing Limited"])
+            sheet.append(["Ticker Symbol", "ACME"])
+            sheet.append(["Fiscal Year", "2025-2026"])
+            sheet.append(["Sector", "Industrials"])
+            sheet.append(["Industry", "Manufacturing"])
+            sheet.append(["Document Title", "Annual Report 2026"])
+            workbook.save(path)
+
+            result = extract_basic_workbook_metadata(path, path.name)
+
+        self.assertEqual(result.company_name, "Acme Manufacturing Limited")
+        self.assertEqual(result.ticker_symbol, "ACME")
+        self.assertEqual(result.fiscal_year, "2025-2026")
+        self.assertEqual(result.document_title, "Annual Report 2026")
+        self.assertEqual(result.sector, "Industrials")
+        self.assertEqual(result.industry, "Manufacturing")
+
+    def test_workbook_metadata_suggestions_use_local_ollama_and_cell_addresses(self):
+        from openpyxl import Workbook
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "company-data.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["Company Name", "Acme Manufacturing Limited"])
+            sheet.append(["Ticker Symbol", "ACME"])
+            workbook.save(path)
+            response_payload = {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "company_name": "Acme Manufacturing Limited",
+                            "ticker_symbol": "ACME",
+                            "fiscal_year": "2025",
+                            "document_title": "Annual Report 2025",
+                            "document_type": "annual_report",
+                            "sector": "Industrials",
+                            "industry": "Manufacturing",
+                        }
+                    )
+                }
+            }
+
+            class FakeResponse:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_args):
+                    return False
+
+                def read(self, _limit):
+                    return json.dumps(response_payload).encode("utf-8")
+
+            captured = {}
+
+            def fake_urlopen(request, timeout):
+                captured["request"] = json.loads(request.data.decode("utf-8"))
+                captured["timeout"] = timeout
+                return FakeResponse()
+
+            with patch("cis_fin.report_metadata.urlopen", side_effect=fake_urlopen):
+                result = suggest_workbook_metadata(path, "http://127.0.0.1:11434", "qwen3.5:9b")
+
+        self.assertEqual(result.ticker_symbol, "ACME")
+        self.assertIn("A1: Company Name", captured["request"]["messages"][1]["content"])
+        self.assertIn("B1: Acme Manufacturing Limited", captured["request"]["messages"][1]["content"])
+        self.assertEqual(captured["timeout"], 180)
+
+    def test_workbook_metadata_suggestions_reject_remote_model_endpoint(self):
+        with self.assertRaisesRegex(ReportMetadataError, "local Ollama URL"):
+            suggest_workbook_metadata(Path("unused.xlsx"), "https://remote.example.test", "qwen3.5:9b")
 
 
 class IngestionTests(unittest.TestCase):
