@@ -37,6 +37,11 @@ KNOWN_TICKER_FALLBACKS = {
     "tata steel": "TATASTEEL",
 }
 
+COMPANY_NAME_ALIASES = {
+    "hcltech": "hcl technologies",
+    "hcl technologies": "hcl technologies",
+}
+
 LOCAL_NIFTY500_PATH = Path(__file__).resolve().parents[2] / "data" / "nifty500.csv"
 MASTER_EQUITY_PATH = Path(__file__).resolve().parents[3] / "BSE NSE MasterEquity list.csv"
 
@@ -50,11 +55,16 @@ def _normalize_name(value: str) -> str:
         tokens.pop()
     return " ".join(tokens)
 
+
+def _name_alias(value: str) -> str:
+    normalized = _normalize_name(value)
+    return COMPANY_NAME_ALIASES.get(normalized, normalized)
+
 def lookup_master_equity(company_name: str = "", symbol: str = "") -> NiftyCompany:
     """Look up company master data, preferring NSE code and falling back to BSE code."""
     if not MASTER_EQUITY_PATH.exists():
         raise NiftyLookupError("The BSE/NSE MasterEquity list is not available.")
-    wanted_name = _normalize_name(company_name)
+    wanted_name = _name_alias(company_name)
     wanted_symbol = symbol.strip().upper()
     try:
         with MASTER_EQUITY_PATH.open(newline="", encoding="utf-8-sig") as source:
@@ -65,7 +75,7 @@ def lookup_master_equity(company_name: str = "", symbol: str = "") -> NiftyCompa
                 nse = (row.get("NSE Code") or "").strip().upper()
                 if not name:
                     continue
-                if (wanted_name and _normalize_name(name) == wanted_name) or (wanted_symbol and wanted_symbol in {nse, bse}):
+                if (wanted_name and _name_alias(name) == wanted_name) or (wanted_symbol and wanted_symbol in {nse, bse}):
                     matches.append((name, nse, bse, row))
             if matches:
                 preferred = next((item for item in matches if item[1]), matches[0])
@@ -105,13 +115,15 @@ def find_master_equity_in_text(text: str) -> NiftyCompany:
         candidates = []
         for row in csv.DictReader(source):
             name = (row.get("Issuer Name") or "").strip()
-            phrase = _normalize_name(name)
+            phrase = _name_alias(name)
             # Require the issuer name to occur as one contiguous phrase. The
             # previous token-by-token match could combine words from unrelated
             # companies mentioned in an annual report.
-            if len(phrase.split()) >= 2:
+            aliases = {phrase, _normalize_name(name)}
+            if any(" " + candidate + " " in " " + normalized + " " for candidate in aliases if len(candidate.split()) >= 1):
                 padded_text = " " + normalized + " "
-                position = padded_text.find(" " + phrase + " ")
+                positions = [padded_text.find(" " + candidate + " ") for candidate in aliases]
+                position = min((p for p in positions if p >= 0), default=-1)
                 if position >= 0:
                     candidates.append((position, -len(phrase), name))
         if candidates:

@@ -43,6 +43,7 @@ from cis_fin.nifty_lookup import (
     find_master_equity_hint,
     find_master_equity_in_text,
     lookup_master_equity,
+    lookup_local_nifty500,
 )
 from cis_fin.settings import Settings
 from cis_fin.storage import ObjectStoreError, S3ObjectStore
@@ -318,9 +319,15 @@ if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
                         master_company = lookup_master_equity(metadata.company_name, metadata.ticker_symbol)
                     except NiftyLookupError:
                         try:
-                            master_company = find_master_equity_hint(uploaded_pdf.name)
+                            master_company = lookup_local_nifty500(metadata.company_name, metadata.ticker_symbol)
                         except NiftyLookupError:
-                            pass
+                            try:
+                                master_company = find_master_equity_hint(uploaded_pdf.name)
+                            except NiftyLookupError:
+                                try:
+                                    master_company = lookup_local_nifty500(uploaded_pdf.name)
+                                except NiftyLookupError:
+                                    pass
                 reference_company = master_company
                 detected = {
                     "company_name_input": reference_company.company_name if reference_company else metadata.company_name,
