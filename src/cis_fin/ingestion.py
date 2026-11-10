@@ -40,6 +40,8 @@ class DocumentRequest:
     title: str
     document_type: str
     path: Path
+    # Preserve the low-level request default for legacy checkpoints. New UI/CLI
+    # requests receive Settings.extractor, which defaults to Docling.
     engine: str = "pymupdf"
     researcher_id: Optional[uuid.UUID] = None
     fiscal_year: Optional[str] = None

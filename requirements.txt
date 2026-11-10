@@ -6,3 +6,4 @@ python-dotenv==1.0.1
 pytest==8.3.4
 scikit-learn==1.5.2
 openpyxl==3.1.5
+docling==2.150.0

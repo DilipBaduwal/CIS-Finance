@@ -22,6 +22,79 @@ def merge_page_ranges(ranges: Iterable[tuple]) -> list:
             merged.append((start, end))
     return merged
 
+
+def map_printed_pages_to_pdf(entries: Iterable[IndexEntry], pdf_page_count: int) -> list:
+    """Map printed report pages to physical PDF pages for spread PDFs.
+
+    Some annual reports store two printed pages on one landscape PDF page.
+    When the contents-page numbers exceed the physical PDF page count, infer
+    that layout from the first detected contents entry and its PDF page.
+    """
+    entries = list(entries)
+    if not entries or max(entry.end_page for entry in entries) <= pdf_page_count:
+        return entries
+
+    first = min(entries, key=lambda entry: entry.start_page)
+    if first.start_page < 1 or first.index_page < 1:
+        return entries
+
+    # Printed pages 2–3 on PDF page 4 means the first printed page in the
+    # spread is floor((2 - 2) / 2), with a three-page front-matter offset.
+    spread_offset = first.index_page + 1 - ((first.start_page - 2) // 2)
+    if spread_offset < 0 or spread_offset > pdf_page_count:
+        return entries
+
+    mapped = []
+    for entry in entries:
+        start = ((entry.start_page - 2) // 2) + spread_offset
+        end = ((entry.end_page - 2) // 2) + spread_offset
+        mapped.append(IndexEntry(entry.title, start, end, entry.index_page))
+    return mapped
+
+
+def detect_header_entries(pages: Iterable) -> list:
+    """Find physical-page section starts from short heading-like lines.
+
+    This is intentionally independent of printed contents-page numbering. It
+    is useful for reports exported as spreads, where the contents numbers do
+    not equal physical PDF pages.
+    """
+    pages = list(pages)
+    entries = []
+    ignored = re.compile(
+        r"\b(?:annual report|corporate overview|statutory reports|financial statements|"
+        r"index|contents|page \d+|amrutanjan health care)\b",
+        re.I,
+    )
+    for page in pages:
+        lines = [" ".join(line.split()) for line in getattr(page, "text", "").splitlines() if line.strip()]
+        for line in lines[:18]:
+            words = line.split()
+            if not 2 <= len(words) <= 10 or len(line) > 90:
+                continue
+            if ignored.search(line) or re.search(r"\d{2,}", line):
+                continue
+            if line[-1:] in ".:;,":
+                continue
+            title_case = sum(word[:1].isupper() for word in words if word[:1].isalpha())
+            if title_case >= max(2, len(words) // 2):
+                entries.append(IndexEntry(line, int(page.page_number), int(page.page_number), 0))
+                break
+
+    unique = {}
+    for entry in entries:
+        unique.setdefault((entry.title.lower(), entry.start_page), entry)
+    ordered = sorted(unique.values(), key=lambda entry: entry.start_page)
+    result = []
+    for index, entry in enumerate(ordered):
+        end = (
+            ordered[index + 1].start_page - 1
+            if index + 1 < len(ordered)
+            else max(int(page.page_number) for page in pages)
+        )
+        result.append(IndexEntry(entry.title, entry.start_page, max(entry.start_page, end), 0))
+    return result
+
 def parse_index_lines(lines: Iterable[str]) -> list:
     entries = []
     pattern = re.compile(r"^\s*(.+?)(?:\.{2,}|\s)\s*(\d+)\s*(?:[-–—]|\bto\b)\s*(\d+)\s*$|^\s*(.+?)(?:\.{2,}|\s)\s*(\d+)\s*$", re.I)
@@ -95,10 +168,27 @@ def detect_index_entries(pages: Iterable) -> list:
         # entries are a reliable secondary signal.
         if not is_likely_index and len(page_entries) < 3:
             continue
-        for index, entry in enumerate(page_entries):
+        # OCR/layout extraction frequently reads a multi-column contents page
+        # row-by-row (or column-by-column) instead of in printed page order.
+        # A contents page gives us reliable start pages, so infer section ends
+        # only after sorting by those printed page numbers.  Using the raw OCR
+        # order can incorrectly turn e.g. page 26 into a range ending at 137.
+        # A layout engine can emit the same OCR line twice when it has more
+        # than one provenance box. Keep one logical entry per title/start
+        # pair before calculating ranges.
+        unique_page_entries = {}
+        for entry in page_entries:
+            unique_page_entries.setdefault(
+                (entry.title.strip().lower(), entry.start_page), entry
+            )
+        ordered_entries = sorted(
+            unique_page_entries.values(),
+            key=lambda entry: (entry.start_page, entry.title.lower()),
+        )
+        for index, entry in enumerate(ordered_entries):
             end = entry.end_page
-            if end == entry.start_page and index + 1 < len(page_entries):
-                next_start = page_entries[index + 1].start_page
+            if end == entry.start_page and index + 1 < len(ordered_entries):
+                next_start = ordered_entries[index + 1].start_page
                 if next_start > entry.start_page:
                     end = next_start - 1
             entry = IndexEntry(entry.title, entry.start_page, end, int(getattr(page, "page_number", entry.index_page)))

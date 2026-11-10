@@ -47,6 +47,10 @@ MASTER_EQUITY_PATH = Path(__file__).resolve().parents[2] / "BSE NSE MasterEquity
 
 
 def _normalize_name(value: str) -> str:
+    # Treat straight, curly, and PDF-extracted apostrophes consistently. A
+    # PDF can turn the curly apostrophe in "Agarwal's" into a replacement
+    # character, while the CSV may retain the straight apostrophe.
+    value = value.replace("'", "").replace("\u2018", "").replace("\u2019", "")
     value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
     value = re.sub(r"[^a-zA-Z0-9]+", " ", value).casefold()
     tokens = value.split()
@@ -113,22 +117,29 @@ def find_master_equity_in_text(text: str) -> NiftyCompany:
         raise NiftyLookupError("The BSE/NSE MasterEquity list is not available.")
     with MASTER_EQUITY_PATH.open(newline="", encoding="utf-8-sig") as source:
         candidates = []
+        padded_text = " " + normalized + " "
         for row in csv.DictReader(source):
             name = (row.get("Issuer Name") or "").strip()
             phrase = _name_alias(name)
+            # One-word matches are too permissive for opening pages: common
+            # words such as "IST" can also be listed as issuer names.
+            if len(phrase.split()) < 2:
+                continue
             # Require the issuer name to occur as one contiguous phrase. The
             # previous token-by-token match could combine words from unrelated
             # companies mentioned in an annual report.
             aliases = {phrase, _normalize_name(name)}
             if any(" " + candidate + " " in " " + normalized + " " for candidate in aliases if len(candidate.split()) >= 1):
-                padded_text = " " + normalized + " "
                 positions = [padded_text.find(" " + candidate + " ") for candidate in aliases]
                 position = min((p for p in positions if p >= 0), default=-1)
                 if position >= 0:
-                    candidates.append((position, -len(phrase), name))
+                    occurrences = max(padded_text.count(" " + candidate + " ") for candidate in aliases)
+                    # Prefer the issuer repeated throughout the opening pages;
+                    # this avoids selecting an exchange named in the address.
+                    candidates.append((-occurrences, -len(phrase.split()), position, name))
         if candidates:
             candidates.sort()
-            return lookup_master_equity(candidates[0][2])
+            return lookup_master_equity(candidates[0][3])
     raise NiftyLookupError("No company name in the opening report pages matched the MasterEquity list.")
 
 

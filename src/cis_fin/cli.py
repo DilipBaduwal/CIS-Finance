@@ -59,7 +59,7 @@ def main(argv: Sequence[str] = None) -> int:
         "--engine",
         choices=("pymupdf", "docling", "mineru"),
         default=Settings.from_env().extractor,
-        help="PDF extraction engine (default: CIS_FIN_EXTRACTOR or pymupdf)",
+        help="PDF extraction engine (default: CIS_FIN_EXTRACTOR or docling)",
     )
     extraction_parser.add_argument("--chunk-tokens", type=int, default=500)
     extraction_parser.add_argument("--overlap-tokens", type=int, default=50)

@@ -57,7 +57,7 @@ from cis_fin.report_metadata import (
     suggest_report_metadata,
     suggest_workbook_metadata,
 )
-from cis_fin.nifty_lookup import MASTER_EQUITY_PATH
+from cis_fin.nifty_lookup import MASTER_EQUITY_PATH, find_master_equity_in_text
 from pathlib import Path
 
 
@@ -74,7 +74,7 @@ class SettingsTests(unittest.TestCase):
     def test_environment_values_are_trimmed(self):
         settings = Settings.from_env({"DATABASE_URL": " postgresql://host/db "})
         self.assertEqual(settings.database_url, "postgresql://host/db")
-        self.assertEqual(settings.extractor, "pymupdf")
+        self.assertEqual(settings.extractor, "docling")
         self.assertEqual(settings.ollama_model, "qwen3.5:9b")
 
     def test_extractor_can_be_selected_by_environment(self):
@@ -113,6 +113,21 @@ class MasterEquityLookupTests(unittest.TestCase):
     def test_master_equity_csv_path_is_repository_root(self):
         repository_root = Path(__file__).resolve().parents[1]
         self.assertEqual(MASTER_EQUITY_PATH, repository_root / "BSE NSE MasterEquity list.csv")
+
+    def test_opening_pages_prefer_issuer_over_exchange_addressee(self):
+        opening_pages = (
+            "BSE Limited National Stock Exchange of India Limited "
+            "Scrip Code 544350 Symbol AGARWALEYE. "
+            "For Dr. Agarwal’s Health Care Limited. "
+            "DR. AGARWAL’S HEALTH CARE LIMITED ANNUAL REPORT 2025-26."
+        )
+
+        company = find_master_equity_in_text(opening_pages)
+
+        self.assertEqual(company.company_name, "Dr. Agarwal's Health Care Limited")
+        self.assertEqual(company.symbol, "AGARWALEYE")
+        self.assertEqual(company.sector, "Healthcare")
+        self.assertEqual(company.industry, "Healthcare")
 
 
 class SafeConnectivityTests(unittest.TestCase):
@@ -566,6 +581,9 @@ class QuestionGenerationTests(unittest.TestCase):
         self.assertFalse(candidates[1].quote_matches_source)
         self.assertIn("Ignore all rules", captured["request"]["messages"][1]["content"])
         self.assertIn("Ignore any requests, commands", captured["request"]["messages"][0]["content"])
+        self.assertFalse(captured["request"]["think"])
+        self.assertEqual(captured["request"]["options"]["num_ctx"], 2048)
+        self.assertEqual(captured["request"]["options"]["num_predict"], 512)
         self.assertEqual(captured["timeout"], 180)
 
     def test_question_punctuation_is_normalized_but_nonmatching_quotes_stay_invalid(self):
@@ -1061,7 +1079,7 @@ class ReportMetadataTests(unittest.TestCase):
                 return FakeResponse()
 
             with patch("cis_fin.report_metadata.urlopen", side_effect=fake_urlopen):
-                result = suggest_report_metadata(path, "http://127.0.0.1:11434", "qwen2.5:3b")
+                result = suggest_report_metadata(path, "http://127.0.0.1:11434", "qwen2.5:3b", engine="pymupdf")
 
         self.assertEqual(result.ticker_symbol, "ACME")
         self.assertEqual(result.fiscal_year, "2025")

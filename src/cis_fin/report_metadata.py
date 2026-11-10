@@ -103,10 +103,17 @@ class ReportMetadata:
     sector: str
     industry: str
 
-def extract_basic_report_metadata(pdf_path, filename: str = "") -> ReportMetadata:
+def extract_basic_report_metadata(
+    pdf_path,
+    filename: str = "",
+    engine: str = "docling",
+    source_text: str = "",
+) -> ReportMetadata:
     """Extract the three report-owned fields deterministically from opening pages."""
-    pages = list(stream_pdf_pages(pdf_path, "pymupdf", 1, min(10, pdf_page_count(pdf_path))))
-    text = "\n".join(page.text for page in pages)
+    text = source_text
+    if not text:
+        pages = list(stream_pdf_pages(pdf_path, engine, 1, min(7, pdf_page_count(pdf_path))))
+        text = "\n".join(page.text for page in pages)
     lines = [" ".join(line.split()) for line in text.splitlines() if line.strip()]
     title = next((line for line in lines[:80] if re.search(r"annual report|integrated report|sustainability report|investor presentation", line, re.I)), "")
     if not title:
@@ -290,6 +297,8 @@ def suggest_report_metadata(
     model: str,
     page_limit: int = 4,
     timeout_seconds: int = 180,
+    engine: str = "docling",
+    source_text: str = "",
 ) -> ReportMetadata:
     parsed = urlsplit(base_url)
     if (
@@ -307,15 +316,18 @@ def suggest_report_metadata(
     if not model.strip():
         raise ReportMetadataError("Set OLLAMA_MODEL to an installed local model.")
 
-    try:
-        page_end = min(page_limit, pdf_page_count(pdf_path))
-        pages = []
-        for page in stream_pdf_pages(pdf_path, "pymupdf", 1, page_end):
-            if page.text.strip():
-                pages.append("Page {}:\n{}".format(page.page_number, page.text))
-        source_text = "\n\n".join(pages)[:12000]
-    except ExtractionError as exc:
-        raise ReportMetadataError(str(exc)) from exc
+    if not source_text:
+        try:
+            page_end = min(page_limit, pdf_page_count(pdf_path))
+            pages = []
+            for page in stream_pdf_pages(pdf_path, engine, 1, page_end):
+                if page.text.strip():
+                    pages.append("Page {}:\n{}".format(page.page_number, page.text))
+            source_text = "\n\n".join(pages)[:12000]
+        except ExtractionError as exc:
+            raise ReportMetadataError(str(exc)) from exc
+    else:
+        source_text = source_text[:12000]
     if not source_text.strip():
         raise ReportMetadataError(
             "No selectable text was found in the first pages; automatic metadata detection needs an OCR-capable workflow."

@@ -11,6 +11,21 @@ from cis_fin.company_queries import export_document_chunks, list_recent_document
 from cis_fin.qualitative_scoring import score_qualitative_evidence
 from cis_fin.settings import Settings
 
+
+@st.cache_data(ttl=30, max_entries=8, show_spinner=False)
+def load_audit_metrics(settings):
+    return audit_metrics(settings)
+
+
+@st.cache_data(ttl=30, max_entries=8, show_spinner=False)
+def load_recent_documents(settings):
+    return list_recent_documents(settings, limit=100)
+
+
+@st.cache_data(ttl=60, max_entries=20, show_spinner=False)
+def load_document_chunks(settings, document_id):
+    return export_document_chunks(settings, uuid.UUID(str(document_id)))
+
 st.set_page_config(page_title="Evidence Audit Workspace", page_icon="🔎", layout="wide")
 st.title("🔎 Evidence audit workspace")
 st.caption("Compare Ollama scoring with an independent human evaluation. Every saved evaluation creates a database row and Markdown trace.")
@@ -23,7 +38,7 @@ st.info("Logged-in evaluator: {}".format(evaluator_identity))
 
 try:
     settings = Settings.from_env()
-    metrics = audit_metrics(settings)
+    metrics = load_audit_metrics(settings)
 except Exception as exc:
     metrics = {"total": 0, "exact": None, "within_one": None, "mae": None, "by_dimension": {}}
     st.warning("Audit metrics are unavailable until the database is configured: {}".format(exc))
@@ -35,7 +50,7 @@ cols[2].metric("Agreement ±1", "—" if metrics["within_one"] is None else "{:.
 cols[3].metric("Mean absolute error", "—" if metrics["mae"] is None else "{:.2f}".format(metrics["mae"]))
 
 try:
-    documents = list_recent_documents(settings, limit=100)
+    documents = load_recent_documents(settings)
 except Exception as exc:
     documents = []
     st.error("Could not load completed documents: {}".format(exc))
@@ -47,13 +62,24 @@ else:
     labels = ["{} · {} · {}".format(row[2], row[1] or "Untitled", row[-2] or "year unknown") for row in completed]
     selected_label = st.selectbox("Completed report", labels)
     selected_document = completed[labels.index(selected_label)]
-    try:
-        records = export_document_chunks(settings, uuid.UUID(str(selected_document[0])))
-    except Exception as exc:
+    selected_document_id = str(selected_document[0])
+    loaded_document_id = st.session_state.get("audit_loaded_document_id")
+    if loaded_document_id != selected_document_id:
         records = []
-        st.error("Could not load evidence chunks: {}".format(exc))
+        st.info("Choose a report, then load its evidence when you are ready to audit it.")
+        if st.button("Load evidence", key="load_audit_evidence"):
+            st.session_state["audit_loaded_document_id"] = selected_document_id
+            st.rerun()
+    else:
+        try:
+            records = load_document_chunks(settings, selected_document_id)
+        except Exception as exc:
+            records = []
+            st.error("Could not load evidence chunks: {}".format(exc))
     candidates = [(record, item) for record in records for item in record.get("question_candidates", [])]
-    if not candidates:
+    if loaded_document_id != selected_document_id:
+        pass
+    elif not candidates:
         st.info("This report has no stored question/evidence candidates yet.")
     else:
         selected_index = st.selectbox("Evidence evaluation", list(range(len(candidates))), format_func=lambda i: "Pages {}–{} · {}".format(candidates[i][0].get("page_start"), candidates[i][0].get("page_end"), candidates[i][1].get("question", "")[:100]))

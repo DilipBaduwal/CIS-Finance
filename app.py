@@ -6,6 +6,7 @@ import uuid
 import json
 import os
 import sys
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from cis_fin.company_queries import (
 from cis_fin.companies import register_detected_company
 from cis_fin.connectivity import check_database, check_qdrant, check_storage
 from cis_fin.extraction import ExtractionError, available_extractors, pdf_page_count, stream_pdf_pages
-from cis_fin.page_index import detect_index_entries, merge_page_ranges
+from cis_fin.page_index import detect_header_entries, detect_index_entries, map_printed_pages_to_pdf, merge_page_ranges
 from cis_fin.ingestion import (
     DocumentRequest,
     IngestionError,
@@ -263,7 +264,7 @@ st.caption(
     "Choose a PDF from your browser. It is sent to this local Streamlit server, then stored in the configured "
     "object-storage bucket and its metadata/chunks are written to PostgreSQL only after you submit."
 )
-st.caption("Company and report details are read directly from the configured local Excel workbook. The PDF remains the source document for ingestion.")
+st.caption("Company and report details are detected from the PDF and verified against the local BSE/NSE MasterEquity list. An Excel workbook is optional.")
 engine = st.selectbox(
     "Extraction engine",
     options=available_extractors(),
@@ -272,9 +273,9 @@ engine = st.selectbox(
     else 0,
 )
 if engine == "mineru":
-    st.warning("MinerU is not integrated in this release. Select PyMuPDF; Docling remains optional and unverified.")
+    st.warning("MinerU is not integrated in this release. Select Docling or PyMuPDF.")
 if engine == "docling":
-    st.warning("Docling is an optional adapter, not installed or verified in the base environment.")
+    st.info("Docling is the default structured PDF extractor. PyMuPDF remains available as a fallback.")
 
 uploaded_pdf = st.file_uploader(
     "Choose your annual report or other source PDF",
@@ -346,15 +347,15 @@ if metadata_workbook_path.is_file():
                 st.session_state["workbook_metadata_complete"] = False
 
         workbook_metadata_ready = bool(st.session_state.get("workbook_metadata_complete"))
-        st.caption("Local metadata workbook: {}".format(metadata_workbook_path))
+        st.caption("Optional local metadata workbook: {}".format(metadata_workbook_path))
         if st.session_state.get("workbook_metadata_warning"):
             st.warning("Excel metadata note: {}".format(st.session_state["workbook_metadata_warning"]))
         elif workbook_metadata_ready:
             st.success("Company and report details were read from the local Excel workbook. Review the values before submission.")
 else:
     st.info(
-        "No local Excel metadata workbook was found at {}. Place the workbook there or set "
-        "CIS_FIN_METADATA_WORKBOOK in .env to its path; no Excel upload is used.".format(metadata_workbook_path)
+        "No optional Excel metadata workbook is configured. The app will use the uploaded PDF with "
+        "the local BSE/NSE MasterEquity list for company, ticker, sector, and industry metadata." 
     )
 inspected_page_count = None
 detected_index_entries = []
@@ -367,11 +368,31 @@ if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
             with inspect_path.open("wb") as target:
                 target.write(uploaded_bytes)
             inspected_page_count = pdf_page_count(inspect_path)
-            # The temporary PDF must still exist while the index is read.
-            index_pages = stream_pdf_pages(inspect_path, engine="pymupdf", page_start=1, page_end=min(20, inspected_page_count))
-            detected_index_entries = detect_index_entries(index_pages)
-            st.session_state["detected_index_entries"] = detected_index_entries
-            st.session_state["index_analysis_checksum"] = upload_checksum
+            opening_page_limit = min(7, inspected_page_count)
+            index_signature = "{}:{}".format(upload_checksum, engine)
+            if st.session_state.get("index_analysis_signature") != index_signature:
+                # Docling is expensive to initialize. Read the first seven pages
+                # once and reuse the result for TOC detection and metadata.
+                index_pages = list(
+                    stream_pdf_pages(
+                        inspect_path,
+                        engine=engine,
+                        page_start=1,
+                        page_end=opening_page_limit,
+                    )
+                )
+                detected_index_entries = detect_index_entries(index_pages)
+                st.session_state["detected_index_entries"] = detected_index_entries
+                st.session_state["opening_source_text"] = "\n\n".join(
+                    "Page {}:\n{}".format(page.page_number, page.text)
+                    for page in index_pages
+                    if page.text.strip()
+                )
+                st.session_state["company_opening_text"] = "\n".join(
+                    page.text for page in index_pages[:2]
+                )
+                st.session_state["index_analysis_signature"] = index_signature
+            detected_index_entries = st.session_state.get("detected_index_entries", [])
         st.caption("PDF contains {} pages.".format(inspected_page_count))
         if not workbook_metadata_ready and st.session_state.get("metadata_analysis_checksum") != upload_checksum:
             st.session_state["metadata_analysis_checksum"] = upload_checksum
@@ -386,13 +407,24 @@ if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
                     analysis_path.write_bytes(uploaded_bytes)
                     with st.spinner("Reading report details locally with {}…".format(settings.ollama_model)):
                         try:
-                            metadata = suggest_report_metadata(analysis_path, settings.ollama_base_url, settings.ollama_model, page_limit=10)
+                            metadata = suggest_report_metadata(
+                                analysis_path,
+                                settings.ollama_base_url,
+                                settings.ollama_model,
+                                page_limit=opening_page_limit,
+                                engine=engine,
+                                source_text=st.session_state.get("opening_source_text", ""),
+                            )
                         except ReportMetadataError as model_error:
-                            metadata = extract_basic_report_metadata(analysis_path, uploaded_pdf.name)
+                            metadata = extract_basic_report_metadata(
+                                analysis_path,
+                                uploaded_pdf.name,
+                                engine=engine,
+                                source_text=st.session_state.get("opening_source_text", ""),
+                            )
                             st.session_state["metadata_analysis_error"] = "Automatic model metadata was unavailable; opening-page extraction was used: {}".format(model_error)
-                    opening_pages = list(stream_pdf_pages(analysis_path, "pymupdf", 1, min(10, inspected_page_count)))
-                    opening_text = "\n".join(page.text for page in opening_pages)
-                    company_opening_text = "\n".join(page.text for page in opening_pages[:2])
+                    opening_text = st.session_state.get("opening_source_text", "")
+                    company_opening_text = st.session_state.get("company_opening_text", "")
                 master_company = None
                 try:
                     master_company = find_master_equity_in_text(company_opening_text)
@@ -482,11 +514,69 @@ elif uploaded_pdf and st.session_state.get("nifty_lookup_error"):
 
 if uploaded_pdf and inspected_page_count:
     st.markdown('<div class="section-label">Step 2 · Select pages</div>', unsafe_allow_html=True)
-    page_widget_key = "{}:{}".format(uploaded_pdf.name, uploaded_pdf.size)
-    detected_index_entries = st.session_state.get("detected_index_entries", [])
-    chunking_mode = st.radio("Page chunking method", options=("Page number range", "Table of contents / index"), horizontal=True, key="chunking_mode_" + page_widget_key)
+    # Include the content checksum so Streamlit cannot reuse page-range widget
+    # state from a different PDF with the same filename and size.
+    page_widget_key = "{}:{}:{}".format(uploaded_pdf.name, uploaded_pdf.size, upload_checksum[:16])
+    raw_index_entries = st.session_state.get("detected_index_entries", [])
+    raw_index_entries = map_printed_pages_to_pdf(raw_index_entries, inspected_page_count)
+    detected_index_entries = []
+    clipped_index_entries = 0
+    for entry in raw_index_entries:
+        start_page = int(entry.start_page)
+        end_page = int(entry.end_page)
+        if start_page > inspected_page_count or end_page < 1:
+            clipped_index_entries += 1
+            continue
+        safe_start = max(1, start_page)
+        safe_end = min(inspected_page_count, end_page)
+        if (safe_start, safe_end) != (start_page, end_page):
+            clipped_index_entries += 1
+        if safe_start <= safe_end:
+            detected_index_entries.append(replace(entry, start_page=safe_start, end_page=safe_end))
+    if clipped_index_entries:
+        st.warning(
+            "Some table-of-contents page ranges exceeded this PDF's {} pages and were adjusted before processing.".format(
+                inspected_page_count
+            )
+        )
+    chunking_mode = st.radio(
+        "Page chunking method",
+        options=("Page number range", "Table of contents / index", "Document headers"),
+        horizontal=True,
+        key="chunking_mode_" + page_widget_key,
+    )
     selected_ranges = []
-    if chunking_mode == "Table of contents / index" and detected_index_entries:
+    if chunking_mode == "Document headers":
+        with tempfile.TemporaryDirectory(prefix="cis-fin-headers-") as temp_dir:
+            header_path = Path(temp_dir) / "report.pdf"
+            header_path.write_bytes(uploaded_bytes)
+            with st.spinner("Reading document headers across the PDF…"):
+                header_entries = detect_header_entries(
+                    list(stream_pdf_pages(header_path, engine=engine, page_start=1, page_end=inspected_page_count))
+                )
+        if header_entries:
+            st.info("Headers were detected from the physical PDF pages. Select one or more ranges and verify the first page of each section.")
+            for index, entry in enumerate(header_entries):
+                checked = st.checkbox(
+                    "{} · PDF pages {}–{}".format(entry.title, entry.start_page, entry.end_page),
+                    key="header_entry_{}_{}".format(page_widget_key, index),
+                )
+                if checked:
+                    selected_ranges.append((entry.start_page, entry.end_page))
+            if selected_ranges:
+                selected_ranges = merge_page_ranges(selected_ranges)
+                selected_page_start = selected_ranges[0][0]
+                selected_page_end = selected_ranges[-1][1]
+                st.success("Selected header ranges: {}.".format(", ".join("{}–{}".format(a, b) for a, b in selected_ranges)))
+            else:
+                selected_page_start = 1
+                selected_page_end = inspected_page_count
+                st.caption("No header range selected yet; the manual page range below will be used.")
+        else:
+            st.warning("No reliable document headers were detected. Use the manual page range.")
+            selected_page_start = 1
+            selected_page_end = inspected_page_count
+    elif chunking_mode == "Table of contents / index" and detected_index_entries:
         st.info("Index/contents entries were detected. Select one or more sections; only their PDF page ranges will be chunked.")
         for index, entry in enumerate(detected_index_entries):
             checked = st.checkbox(
@@ -508,7 +598,9 @@ if uploaded_pdf and inspected_page_count:
         st.caption("No contents page was detected in the first 20 pages. Use the manual range below.")
         selected_page_start = 1
         selected_page_end = inspected_page_count
-    if chunking_mode == "Page number range" or not detected_index_entries:
+    if chunking_mode == "Page number range" or (
+        chunking_mode == "Table of contents / index" and not detected_index_entries
+    ):
         lower_column, upper_column = st.columns(2)
         with lower_column:
             selected_page_start = st.number_input("First page to process", min_value=1, max_value=inspected_page_count, value=1, step=1, key="page_start_" + page_widget_key)
@@ -522,7 +614,7 @@ else:
     selected_page_ranges = None
 
 with st.form("pdf_ingestion_form", clear_on_submit=False):
-    st.markdown('<div class="step-card"><strong>Step 2 · Confirm report details</strong><br><small>These values may be suggested from the Excel workbook or PDF. Review them before processing.</small></div>', unsafe_allow_html=True)
+    st.markdown('<div class="step-card"><strong>Step 2 · Confirm report details</strong><br><small>These values may be suggested from the PDF and local BSE/NSE MasterEquity list. Review them before processing.</small></div>', unsafe_allow_html=True)
     left, right = st.columns(2, gap="large")
     with left:
         company_name = st.text_input("Company name", key="company_name_input")

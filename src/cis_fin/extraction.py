@@ -114,11 +114,15 @@ class DoclingExtractor:
             from docling.document_converter import DocumentConverter
         except ImportError as exc:
             raise ExtractionError(
-                "Docling is not installed. Install the optional Docling integration in the project environment."
+                "Docling is not installed. Install the project requirements before using the default extractor."
             ) from exc
 
         try:
-            result = DocumentConverter().convert(str(path))
+            # Restrict conversion to the requested range. Docling otherwise parses the
+            # entire report even when the UI only needs opening/TOC pages.
+            first_page = page_start or 1
+            last_page = page_end or pdf_page_count(path)
+            result = DocumentConverter().convert(str(path), page_range=(first_page, last_page))
             pages = {}
             for item, _level in result.document.iterate_items():
                 text = getattr(item, "text", None)
@@ -207,7 +211,7 @@ def pdf_page_count(path: Path) -> int:
 
 def stream_pdf_pages(
     path: Path,
-    engine: str = "pymupdf",
+    engine: str = "docling",
     page_start: Optional[int] = None,
     page_end: Optional[int] = None,
 ) -> Iterator[PageText]:
@@ -241,7 +245,7 @@ def file_sha256(path: Path) -> str:
 
 def extract_pdf(
     path: Path,
-    engine: str = "pymupdf",
+    engine: str = "docling",
     page_start: Optional[int] = None,
     page_end: Optional[int] = None,
 ) -> ExtractedDocument:

@@ -53,9 +53,16 @@ else:
             st.session_state.pop("previous_work_document_id", None)
             st.rerun()
         if selected:
-            document_id, company, title, year, status = selected
+            document_id, title, symbol, industry, year, status = selected
             st.title(title or "Untitled report")
-            st.caption("{} · Fiscal year: {} · Status: {}".format(company or "Unknown company", year or "not set", status))
+            st.caption(
+                "{} · {} · Fiscal year: {} · Status: {}".format(
+                    symbol or "Unknown company",
+                    industry or "Industry not set",
+                    year or "not set",
+                    status,
+                )
+            )
             try:
                 records = export_document_chunks(settings, uuid.UUID(str(document_id)))
             except (CompanyLookupError, ValueError) as exc:
@@ -103,13 +110,20 @@ else:
                 st.info("No chunk data is available for this document yet.")
     else:
         st.write("{} saved document{} · Select one to inspect its chunks and questions.".format(len(documents), "" if len(documents) == 1 else "s"))
-        for document_id, company, title, year, status in documents:
+        for document_id, title, symbol, industry, year, status in documents:
             with st.container(border=True):
                 left, right = st.columns([4, 1])
                 with left:
-                    st.subheader(company or "Unknown company")
+                    st.subheader(symbol or "Unknown company")
                     st.write(title or "Untitled report")
-                    st.caption("Fiscal year: {} · Status: {} · ID: {}".format(year or "not set", status, str(document_id)[:8]))
+                    st.caption(
+                        "{} · Fiscal year: {} · Status: {} · ID: {}".format(
+                            industry or "Industry not set",
+                            year or "not set",
+                            status,
+                            str(document_id)[:8],
+                        )
+                    )
                 with right:
                     if st.button("Open report", key="open_previous_" + str(document_id), use_container_width=True):
                         st.session_state["previous_work_document_id"] = str(document_id)

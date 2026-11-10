@@ -61,7 +61,7 @@ class Settings:
             s3_access_key_id=configured("S3_ACCESS_KEY_ID"),
             s3_secret_access_key=configured("S3_SECRET_ACCESS_KEY"),
             s3_region=configured("S3_REGION"),
-            extractor=configured("CIS_FIN_EXTRACTOR") or "pymupdf",
+            extractor=configured("CIS_FIN_EXTRACTOR") or "docling",
             max_concurrent_ingestions=max_concurrent_ingestions,
             ollama_base_url=configured("OLLAMA_BASE_URL") or "http://127.0.0.1:11434",
             ollama_model=configured("OLLAMA_MODEL") or "qwen3.5:9b",

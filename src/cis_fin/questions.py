@@ -164,8 +164,11 @@ class OllamaQuestionGenerator:
         body = {
             "model": self.model,
             "stream": False,
+            # Qwen 3.8 can spend substantial time on hidden reasoning even
+            # when the caller only needs a bounded JSON candidate list.
+            "think": False,
             "format": QUESTION_FORMAT,
-            "options": {"temperature": 0.0 if repair else 0.1, "num_ctx": 4096, "num_predict": 1024},
+            "options": {"temperature": 0.0 if repair else 0.1, "num_ctx": 2048, "num_predict": 512},
             "messages": messages,
         }
         request = Request(

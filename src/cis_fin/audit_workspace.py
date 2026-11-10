@@ -16,7 +16,7 @@ def save_evaluation(settings, document_id, company, question_id, question, dimen
         raise AuditWorkspaceError("Set DATABASE_URL before saving an evaluation.")
     try:
         import psycopg
-        with psycopg.connect(secure_postgres_dsn(settings.database_url)) as connection:
+        with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=5) as connection:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT company_id, document_checksum FROM documents WHERE document_id = %s", (uuid.UUID(str(document_id)),))
                 row = cursor.fetchone()
@@ -75,17 +75,36 @@ def audit_metrics(settings):
         raise AuditWorkspaceError("Set DATABASE_URL before loading audit metrics.")
     try:
         import psycopg
-        with psycopg.connect(secure_postgres_dsn(settings.database_url)) as connection:
+        with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=5) as connection:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT expected_score, given_score, dimension FROM audit_rows ORDER BY created_at")
-                rows = cursor.fetchall()
-        if not rows:
-            return {"total": 0, "exact": None, "within_one": None, "mae": None, "by_dimension": {}}
-        errors = [abs(int(a) - int(b)) for a, b, _ in rows]
-        result = {"total": len(rows), "exact": sum(a == b for a, b, _ in rows) / len(rows), "within_one": sum(abs(int(a)-int(b)) <= 1 for a, b, _ in rows) / len(rows), "mae": sum(errors) / len(errors), "by_dimension": {}}
-        for dimension in sorted({row[2] or "unknown" for row in rows}):
-            subset = [row for row in rows if (row[2] or "unknown") == dimension]
-            result["by_dimension"][dimension] = {"count": len(subset), "mae": sum(abs(int(a)-int(b)) for a,b,_ in subset) / len(subset)}
-        return result
+                cursor.execute(
+                    """
+                    SELECT COUNT(*),
+                           AVG(CASE WHEN expected_score = given_score THEN 1.0 ELSE 0.0 END),
+                           AVG(CASE WHEN ABS(expected_score - given_score) <= 1 THEN 1.0 ELSE 0.0 END),
+                           AVG(ABS(expected_score - given_score))
+                    FROM audit_rows
+                    """
+                )
+                total, exact, within_one, mae = cursor.fetchone()
+                cursor.execute(
+                    """
+                    SELECT COALESCE(dimension, 'unknown'), COUNT(*), AVG(ABS(expected_score - given_score))
+                    FROM audit_rows
+                    GROUP BY COALESCE(dimension, 'unknown')
+                    ORDER BY COALESCE(dimension, 'unknown')
+                    """
+                )
+                dimension_rows = cursor.fetchall()
+        return {
+            "total": total,
+            "exact": exact,
+            "within_one": within_one,
+            "mae": mae,
+            "by_dimension": {
+                dimension: {"count": count, "mae": dimension_mae}
+                for dimension, count, dimension_mae in dimension_rows
+            },
+        }
     except Exception as exc:
         raise AuditWorkspaceError("Could not load audit metrics: {}".format(exc)) from exc

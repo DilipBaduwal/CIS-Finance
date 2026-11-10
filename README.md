@@ -104,14 +104,14 @@ Extract one PDF into a new JSONL output file without connecting to cloud service
 ```sh
 PYTHONPATH=src python -m cis_fin.cli extract-pdf ./annual-report.pdf \
   --output ./artifacts/annual-report.chunks.jsonl \
-  --engine pymupdf
+  --engine docling
 ```
 
 The Streamlit app reads a local `.xlsx` workbook directly to suggest and fill the company and report detail fields. By default, place it at `data/company_metadata.xlsx`; alternatively, set `CIS_FIN_METADATA_WORKBOOK` in `.env` to its path. No workbook upload is needed. The workbook is read locally for metadata only; a PDF is still required and remains the source document for ingestion. If local Ollama metadata is unavailable, clearly labeled workbook cells are used as a fallback. Legacy `.xls` files are not currently supported.
 
 The Streamlit page accepts a PDF upload, then automatically asks the local Ollama model to suggest company name, ticker, report year/type, sector, and industry from the first four pages. Review and correct these fields before submission; sector and industry are suggestions, not verified classifications. A company record is created automatically with status `pending_review` if the ticker is new—there is no separate company-registration step. If the PDF does not clearly identify a ticker, enter it in the form. The page also lets you set inclusive first and last page numbers; only that range is extracted and original PDF page numbers are preserved in citations. The server-side upload limit is 100 MB per file; Streamlit holds one uploaded file in its upload buffer, then the pipeline streams page extraction and writes bounded chunk batches. After extraction, download the evidence JSON; it includes company, sector, industry, source metadata, page references, and chunk text.
 
-Automatic metadata detection requires Ollama running locally with `OLLAMA_MODEL` installed. If that is unavailable or the report is scanned, the UI explains the issue and you can enter metadata manually. A new company is marked pending review rather than claimed as verified constituent data. Set `CIS_FIN_EXTRACTOR=docling` to select the optional adapter. Docling must be installed separately and requires a compatible Python runtime; it is not included in the base dependencies. MinerU is currently not integrated. Only PyMuPDF has been tested. The upload form is unauthenticated, local-development only, and must not be exposed to a network.
+Automatic metadata detection requires Ollama running locally with `OLLAMA_MODEL` installed. If that is unavailable or the report is scanned, the UI explains the issue and you can enter metadata manually. A new company is marked pending review rather than claimed as verified constituent data. Docling is the default structured PDF extractor and is installed by `requirements.txt`; PyMuPDF remains available as a lightweight fallback via `CIS_FIN_EXTRACTOR=pymupdf`. MinerU is currently not integrated. The upload form is unauthenticated, local-development only, and must not be exposed to a network.
 
 The local extraction preview and database-ingestion CLI also accept inclusive page bounds:
 
@@ -133,7 +133,7 @@ This command writes document metadata/chunks to PostgreSQL and the original PDF 
 PYTHONPATH=src python -m cis_fin.cli ingest-pdf ./annual-report.pdf \
   --company-id COMPANY_UUID --title "Annual report" \
   --document-type annual_report --fiscal-year 2025 \
-  --source-classification public_source --engine pymupdf \
+  --source-classification public_source --engine docling \
   --page-start 1 --page-end 30
 ```
 
