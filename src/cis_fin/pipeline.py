@@ -266,6 +266,140 @@ class PipelineJobStore:
             ) from exc
 
 
+def retry_failed_document_job(settings: Settings, job_id: uuid.UUID) -> uuid.UUID:
+    """Reset one exhausted downstream job so the owner can retry it safely."""
+    store = PipelineJobStore(settings)
+    try:
+        with store.store._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT document_id, status, stage, attempt_count, max_attempts
+                    FROM processing_jobs
+                    WHERE job_id = %s
+                    FOR UPDATE
+                    """,
+                    (job_id,),
+                )
+                row = cursor.fetchone()
+                if not row:
+                    raise PipelineProcessingError("Processing job {} does not exist.".format(job_id))
+                document_id, status, stage, attempts, maximum = row
+                if status != "failed" or attempts < maximum:
+                    raise PipelineProcessingError(
+                        "This job is not an exhausted failed job; use its normal resume flow."
+                    )
+                if stage not in ("chunked", "questions", "embedded", "indexed"):
+                    raise PipelineProcessingError(
+                        "Job stage '{}' cannot be retried from the saved downstream checkpoint.".format(stage)
+                    )
+                cursor.execute(
+                    """
+                    UPDATE processing_jobs
+                    SET status = 'queued', attempt_count = 0, next_attempt_at = NULL,
+                        lease_owner = NULL, lease_expires_at = NULL,
+                        error_code = NULL, error_message = NULL, updated_at = now()
+                    WHERE job_id = %s
+                    """,
+                    (job_id,),
+                )
+                cursor.execute(
+                    "UPDATE documents SET processing_status = 'queued', updated_at = now() WHERE document_id = %s",
+                    (document_id,),
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO audit_events (audit_id, action, entity_type, entity_id, details)
+                    VALUES (%s, 'document.pipeline_retry_reset', 'document', %s, %s::jsonb)
+                    """,
+                    (
+                        uuid.uuid4(),
+                        document_id,
+                        '{"job_id":"%s","previous_attempts":%s}' % (job_id, attempts),
+                    ),
+                )
+                return document_id
+    except PipelineProcessingError:
+        raise
+    except store.store.psycopg.Error as exc:
+        raise PipelineProcessingError(
+            "Could not reset the failed job ({}).".format(type(exc).__name__)
+        ) from exc
+
+
+def reset_zero_candidate_job(settings: Settings, job_id: uuid.UUID) -> uuid.UUID:
+    """Reset question generation when a completed job saved no candidates."""
+    store = PipelineJobStore(settings)
+    try:
+        with store.store._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT document_id, status, stage
+                    FROM processing_jobs WHERE job_id = %s FOR UPDATE
+                    """,
+                    (job_id,),
+                )
+                row = cursor.fetchone()
+                if not row:
+                    raise PipelineProcessingError("Processing job {} does not exist.".format(job_id))
+                document_id, status, stage = row
+                if status != "completed" or stage != "complete":
+                    raise PipelineProcessingError("This job is not in the completed zero-candidate state.")
+                cursor.execute(
+                    """
+                    SELECT count(*)
+                    FROM questions q
+                    JOIN chunk_question_evidence e ON e.question_id = q.question_id
+                    JOIN chunks c ON c.chunk_id = e.chunk_id
+                    WHERE c.document_id = %s
+                    """,
+                    (document_id,),
+                )
+                if cursor.fetchone()[0] != 0:
+                    raise PipelineProcessingError("Questions already exist for this document; use the audit workspace.")
+                cursor.execute(
+                    """
+                    DELETE FROM question_generation_checkpoints
+                    WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE document_id = %s)
+                    """,
+                    (document_id,),
+                )
+                cursor.execute(
+                    """
+                    UPDATE processing_jobs
+                    SET stage = 'chunked', status = 'queued', attempt_count = 0,
+                        completed_at = NULL, next_attempt_at = NULL,
+                        lease_owner = NULL, lease_expires_at = NULL,
+                        error_code = NULL, error_message = NULL, updated_at = now()
+                    WHERE job_id = %s
+                    """,
+                    (job_id,),
+                )
+                cursor.execute(
+                    "UPDATE documents SET processing_status = 'queued', updated_at = now() WHERE document_id = %s",
+                    (document_id,),
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO audit_events (audit_id, action, entity_type, entity_id, details)
+                    VALUES (%s, 'document.questions_reset', 'document', %s, %s::jsonb)
+                    """,
+                    (
+                        uuid.uuid4(),
+                        document_id,
+                        '{"job_id":"%s","reason":"zero_question_candidates"}' % job_id,
+                    ),
+                )
+                return document_id
+    except PipelineProcessingError:
+        raise
+    except store.store.psycopg.Error as exc:
+        raise PipelineProcessingError(
+            "Could not reset question generation ({}).".format(type(exc).__name__)
+        ) from exc
+
+
 def get_document_progress(settings: Settings, document_id: uuid.UUID) -> DocumentProgress:
     store = PostgresIngestionStore(settings)
     try:

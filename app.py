@@ -36,6 +36,8 @@ from cis_fin.pipeline import (
     cancel_document_job,
     get_document_progress,
     process_document_pipeline,
+    retry_failed_document_job,
+    reset_zero_candidate_job,
 )
 from cis_fin.auth import authenticate, configured_users
 from cis_fin.question_review import QuestionReviewError, edit_question_candidate
@@ -190,10 +192,45 @@ def render_live_progress(current_settings, document_id):
                 st.error(str(exc))
     if progress.job_status == "completed":
         st.success("All configured processing stages completed.")
+        if progress.candidate_count == 0 and progress.indexed_chunk_count:
+            st.warning("This job completed indexing but saved no question candidates.")
+            if st.button("Regenerate questions", key="regenerate_questions_" + str(progress.job_id)):
+                try:
+                    reset_zero_candidate_job(current_settings, progress.job_id)
+                    with st.spinner("Regenerating questions from saved chunks…"):
+                        regenerate_status = st.status("Regenerating grounded questions…", expanded=True)
+                        result = run_pipeline_with_ui_progress(
+                            current_settings, progress.job_id, regenerate_status
+                        )
+                        regenerate_status.update(label="Question regeneration completed", state="complete")
+                    st.success(
+                        "Regeneration completed: saved {} question candidates.".format(
+                            result.question_candidates_created
+                        )
+                    )
+                    st.rerun()
+                except PipelineProcessingError as exc:
+                    st.error("Could not regenerate questions: {}".format(exc))
     elif progress.job_status == "retry_wait":
         st.warning("A stage failed and is waiting for its configured retry backoff.")
     elif progress.job_status == "failed":
         st.error("The job reached its retry limit and needs owner review.")
+        if st.button("Retry failed job", key="retry_failed_job_" + str(progress.job_id)):
+            try:
+                retry_failed_document_job(current_settings, progress.job_id)
+                with st.spinner("Retrying saved questions and vector indexing…"):
+                    retry_status = st.status("Retrying saved downstream job…", expanded=True)
+                    result = run_pipeline_with_ui_progress(current_settings, progress.job_id, retry_status)
+                    retry_status.update(label="Saved job completed", state="complete")
+                st.success(
+                    "Retry completed: saved {} question candidates and indexed {} chunks.".format(
+                        result.question_candidates_created,
+                        result.newly_indexed_chunks,
+                    )
+                )
+                st.rerun()
+            except PipelineProcessingError as exc:
+                st.error("Could not retry failed job: {}".format(exc))
     elif progress.job_status == "running" and (
         not progress.lease_expires_at or progress.lease_expires_at > datetime.now(timezone.utc)
     ):
