@@ -11,6 +11,39 @@ class AuditWorkspaceError(Exception):
     pass
 
 
+def list_document_audit_reviews(settings, document_id):
+    """Return the latest saved review for each audited question/evidence pair."""
+    if not settings.database_url:
+        raise AuditWorkspaceError("Set DATABASE_URL before loading audit reviews.")
+    try:
+        import psycopg
+        with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=5) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT DISTINCT ON (question_id, trace_metadata->>'chunk_id')
+                           question_id, trace_metadata
+                    FROM score_traces
+                    WHERE document_id = %s
+                    ORDER BY question_id, trace_metadata->>'chunk_id', created_at DESC
+                    """,
+                    (uuid.UUID(str(document_id)),),
+                )
+                rows = cursor.fetchall()
+        reviews = {}
+        for question_id, metadata in rows:
+            if not isinstance(metadata, dict):
+                continue
+            chunk_id = metadata.get("chunk_id")
+            if chunk_id:
+                reviews[(str(question_id), str(chunk_id))] = metadata
+        return reviews
+    except AuditWorkspaceError:
+        raise
+    except Exception as exc:
+        raise AuditWorkspaceError("Could not load saved audit reviews: {}".format(exc)) from exc
+
+
 def save_evaluation(settings, document_id, company, question_id, question, dimension, record, ollama, human_score, human_rationale, evaluator, status):
     if not settings.database_url:
         raise AuditWorkspaceError("Set DATABASE_URL before saving an evaluation.")
@@ -25,6 +58,9 @@ def save_evaluation(settings, document_id, company, question_id, question, dimen
                 company_id, checksum = row
                 trace_id = uuid.uuid4()
                 now = datetime.now(timezone.utc)
+                document_uuid = uuid.UUID(str(document_id))
+                question_uuid = uuid.UUID(str(question_id))
+                chunk_id = uuid.UUID(str(record["chunk_id"]))
                 metadata = {
                     "ollama_score": ollama.get("score"),
                     "ollama_rationale": ollama.get("rationale", ""),
@@ -40,7 +76,23 @@ def save_evaluation(settings, document_id, company, question_id, question, dimen
                 }
                 trace_dir = Path("artifacts/audit_traces")
                 trace_dir.mkdir(parents=True, exist_ok=True)
-                trace_path = trace_dir / "{}_{}_{}.md".format(now.strftime("%Y%m%dT%H%M%SZ"), company, str(question_id)[:8])
+                cursor.execute(
+                    """
+                    SELECT trace_id, trace_path
+                    FROM score_traces
+                    WHERE document_id = %s AND question_id = %s
+                      AND trace_metadata->>'chunk_id' = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (document_uuid, question_uuid, str(chunk_id)),
+                )
+                existing_trace = cursor.fetchone()
+                if existing_trace:
+                    trace_id = existing_trace[0]
+                    trace_path = Path(existing_trace[1])
+                else:
+                    trace_path = trace_dir / "{}_{}_{}.md".format(now.strftime("%Y%m%dT%H%M%SZ"), company, str(question_id)[:8])
                 difference = None if human_score is None or ollama.get("score") is None else human_score - int(ollama["score"])
                 trace_path.write_text(
                     "# Evidence evaluation\n\n"
@@ -55,14 +107,40 @@ def save_evaluation(settings, document_id, company, question_id, question, dimen
                         human_score, human_rationale, difference, status, evaluator, record.get("chunk_text", "")
                     ), encoding="utf-8"
                 )
-                cursor.execute(
-                    "INSERT INTO audit_rows (audit_row_id, text_evidence, expected_score, given_score, company, question, dimension, source_document, page_number, chunk_id, auditor, comments) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                    (trace_id, record.get("chunk_text", ""), int(human_score), int(ollama.get("score", 0)), company, question, dimension, str(document_id), record.get("page_start"), uuid.UUID(str(record["chunk_id"])), evaluator, json.dumps(metadata)),
+                audit_values = (
+                    record.get("chunk_text", ""), int(human_score), int(ollama.get("score", 0)), company,
+                    question, dimension, str(document_id), record.get("page_start"), chunk_id, evaluator,
+                    json.dumps(metadata),
                 )
-                cursor.execute(
-                    "INSERT INTO score_traces (trace_id, company_id, document_id, question_id, trace_path, source_checksum, model, prompt_version, score, trace_metadata) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)",
-                    (trace_id, company_id, uuid.UUID(str(document_id)), uuid.UUID(str(question_id)), str(trace_path), checksum, ollama.get("model", "ollama"), "audit-v1", int(ollama.get("score", 0)), json.dumps(metadata)),
-                )
+                if existing_trace:
+                    cursor.execute(
+                        """
+                        UPDATE audit_rows
+                        SET text_evidence = %s, expected_score = %s, given_score = %s,
+                            company = %s, question = %s, dimension = %s, source_document = %s,
+                            page_number = %s, chunk_id = %s, auditor = %s, comments = %s, created_at = now()
+                        WHERE audit_row_id = %s
+                        """,
+                        audit_values + (trace_id,),
+                    )
+                    cursor.execute(
+                        """
+                        UPDATE score_traces
+                        SET trace_path = %s, source_checksum = %s, model = %s, score = %s,
+                            trace_metadata = %s::jsonb, created_at = now()
+                        WHERE trace_id = %s
+                        """,
+                        (str(trace_path), checksum, ollama.get("model", "ollama"), int(ollama.get("score", 0)), json.dumps(metadata), trace_id),
+                    )
+                else:
+                    cursor.execute(
+                        "INSERT INTO audit_rows (audit_row_id, text_evidence, expected_score, given_score, company, question, dimension, source_document, page_number, chunk_id, auditor, comments) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (trace_id,) + audit_values,
+                    )
+                    cursor.execute(
+                        "INSERT INTO score_traces (trace_id, company_id, document_id, question_id, trace_path, source_checksum, model, prompt_version, score, trace_metadata) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)",
+                        (trace_id, company_id, document_uuid, question_uuid, str(trace_path), checksum, ollama.get("model", "ollama"), "audit-v1", int(ollama.get("score", 0)), json.dumps(metadata)),
+                    )
         return trace_path
     except AuditWorkspaceError:
         raise
