@@ -172,8 +172,8 @@ class MinerUExtractor:
 
 
 EXTRACTORS = {
-    "pymupdf": PyMuPDFExtractor,
     "docling": DoclingExtractor,
+    "pymupdf": PyMuPDFExtractor,
     "mineru": MinerUExtractor,
 }
 
@@ -232,6 +232,39 @@ def stream_pdf_pages(
     yield from EXTRACTORS[engine]().extract_pages(path, first, last)
 
 
+def extract_opening_pages_with_fallback(
+    path: Path,
+    preferred_engine: str,
+    page_end: int,
+) -> Tuple[str, List[PageText]]:
+    """Read metadata pages with the configured engine and a text fallback."""
+    try:
+        pages = list(stream_pdf_pages(path, preferred_engine, 1, page_end))
+        if pages and any(page.text.strip() for page in pages):
+            return preferred_engine, pages
+    except ExtractionError as primary_error:
+        if preferred_engine != "docling":
+            raise
+        pages = []
+        fallback_error = primary_error
+    else:
+        fallback_error = None
+
+    if preferred_engine != "docling":
+        raise ExtractionError("The selected PDF extractor returned no readable opening-page text.")
+    try:
+        pages = list(stream_pdf_pages(path, "pymupdf", 1, page_end))
+    except ExtractionError:
+        if fallback_error is not None:
+            raise fallback_error
+        raise
+    if not pages or not any(page.text.strip() for page in pages):
+        if fallback_error is not None:
+            raise fallback_error
+        raise ExtractionError("No readable opening-page text was found in the PDF.")
+    return "pymupdf", pages
+
+
 def file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     try:
@@ -260,7 +293,17 @@ def extract_pdf(
 
     extractor = EXTRACTORS[engine]()
     total_pages = pdf_page_count(path)
-    pages = tuple(stream_pdf_pages(path, engine, page_start, page_end))
+    actual_engine = engine
+    try:
+        pages = tuple(stream_pdf_pages(path, engine, page_start, page_end))
+    except ExtractionError as primary_error:
+        if engine != "docling":
+            raise
+        try:
+            pages = tuple(stream_pdf_pages(path, "pymupdf", page_start, page_end))
+            actual_engine = "pymupdf"
+        except ExtractionError:
+            raise primary_error
     if not pages:
         raise ExtractionError("PDF has no extractable pages; it cannot be marked successfully extracted.")
     if any(page.page_number < 1 for page in pages):
@@ -279,8 +322,8 @@ def extract_pdf(
         page_count=total_pages,
         pages=pages,
         warnings=tuple(warnings),
-        engine=engine,
-        engine_version=extractor.version(),
+        engine=actual_engine,
+        engine_version=EXTRACTORS[actual_engine]().version(),
     )
 
 

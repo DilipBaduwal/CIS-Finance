@@ -55,6 +55,15 @@ def _parse_metadata_content(content: str) -> dict:
             last_error = exc
     raise ValueError("No JSON metadata object was found") from last_error
 
+
+def _metadata_content(payload: dict) -> str:
+    """Accept Ollama chat responses from current and older local runtimes."""
+    message = payload.get("message") or {}
+    content = message.get("content") or payload.get("response") or ""
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("Ollama returned an empty metadata response")
+    return content
+
 def _normalize_metadata(result: dict) -> dict:
     """Keep metadata detection automatic even when a local model uses synonyms."""
     aliases = {
@@ -253,6 +262,7 @@ def suggest_workbook_metadata(
     body = {
         "model": model.strip(),
         "stream": False,
+        "think": False,
         "format": METADATA_SCHEMA,
         "options": {"temperature": 0, "num_ctx": 4096, "num_predict": 512},
         "messages": [
@@ -355,7 +365,7 @@ def suggest_report_metadata(
         if len(response_body) > 1024 * 1024:
             raise ReportMetadataError("Local Ollama returned an oversized metadata response.")
         payload = json.loads(response_body.decode("utf-8"))
-        result = _parse_metadata_content(payload["message"]["content"])
+        result = _parse_metadata_content(_metadata_content(payload))
         result = _normalize_metadata(result)
         return ReportMetadata(
             company_name=result["company_name"].strip()[:250],

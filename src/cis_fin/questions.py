@@ -294,15 +294,22 @@ class PostgresQuestionStore:
         document_id: uuid.UUID,
         limit: int,
         model: str,
+        max_page_end: Optional[int] = None,
     ) -> Sequence[Tuple[uuid.UUID, str]]:
         try:
             with self.psycopg.connect(self.dsn, connect_timeout=20) as connection:
                 with connection.cursor() as cursor:
+                    page_filter = "" if max_page_end is None else " AND ch.page_end <= %s"
+                    params = [document_id]
+                    if max_page_end is not None:
+                        params.append(max_page_end)
+                    params.extend((model, PROMPT_VERSION, limit))
                     cursor.execute(
                         """
                         SELECT ch.chunk_id, ch.chunk_text
                         FROM chunks AS ch
                         WHERE ch.document_id = %s
+                          {page_filter}
                           AND NOT EXISTS (
                               SELECT 1 FROM question_generation_checkpoints AS checkpoint
                               WHERE checkpoint.chunk_id = ch.chunk_id
@@ -311,8 +318,8 @@ class PostgresQuestionStore:
                           )
                         ORDER BY ch.chunk_index
                         LIMIT %s
-                        """,
-                        (document_id, model, PROMPT_VERSION, limit),
+                        """.format(page_filter=page_filter),
+                        tuple(params),
                     )
                     return list(cursor.fetchall())
         except self.psycopg.Error as exc:
@@ -452,6 +459,7 @@ def generate_document_questions(
     generator: Optional[OllamaQuestionGenerator] = None,
     store: Optional[PostgresQuestionStore] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
+    max_page_end: Optional[int] = None,
 ) -> GenerationResult:
     if not 1 <= limit <= 100:
         raise QuestionGenerationError("Question-generation limit must be between 1 and 100 chunks.")
@@ -460,7 +468,11 @@ def generate_document_questions(
         settings.ollama_model,
     )
     store = store or PostgresQuestionStore(settings)
-    chunks = store.pending_chunks(document_id, limit, generator.model)
+    chunks = (
+        store.pending_chunks(document_id, limit, generator.model)
+        if max_page_end is None
+        else store.pending_chunks(document_id, limit, generator.model, max_page_end)
+    )
     candidates_created = 0
     candidates_needing_review = 0
     invalid_candidates = 0

@@ -22,6 +22,7 @@ from cis_fin.extraction import (
     ExtractionError,
     PageText,
     extract_pdf,
+    extract_opening_pages_with_fallback,
     iter_chunks,
     pdf_page_count,
     stream_pdf_pages,
@@ -397,6 +398,21 @@ class ExtractionTests(unittest.TestCase):
             path = self._make_pdf(directory, "")
             with self.assertRaisesRegex(ExtractionError, "No selectable text"):
                 extract_pdf(path, "pymupdf")
+
+    def test_docling_opening_page_failure_falls_back_to_pymupdf(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._make_pdf(directory, "Annual report opening page")
+
+            def fake_stream(_path, engine, page_start, page_end):
+                if engine == "docling":
+                    raise ExtractionError("Docling failed")
+                return iter([PageText(1, "Annual report opening page")])
+
+            with patch("cis_fin.extraction.stream_pdf_pages", side_effect=fake_stream):
+                engine, pages = extract_opening_pages_with_fallback(path, "docling", 1)
+
+        self.assertEqual(engine, "pymupdf")
+        self.assertEqual(pages[0].text, "Annual report opening page")
 
     def test_extractor_selection_reports_unavailable_mineru_integration(self):
         with tempfile.TemporaryDirectory() as directory:

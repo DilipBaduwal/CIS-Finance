@@ -500,6 +500,44 @@ class PostgresIngestionStore:
                 )
             ) from exc
 
+    def update_processing_page_range(self, job_id: uuid.UUID, page_start: int, page_end: int) -> None:
+        """Change the downstream page window for a duplicate PDF resume."""
+        if page_start < 1 or page_end < page_start:
+            raise IngestionError("The selected page range is invalid.")
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        UPDATE processing_jobs
+                        SET checkpoint = checkpoint || %s::jsonb, updated_at = now()
+                        WHERE job_id = %s AND stage IN ('registered', 'stored', 'extracted', 'chunked', 'questions', 'embedded', 'indexed')
+                        RETURNING document_id
+                        """,
+                        (
+                            json.dumps({
+                                "selected_page_start": page_start,
+                                "selected_page_end": page_end,
+                            }),
+                            job_id,
+                        ),
+                    )
+                    row = cursor.fetchone()
+                    if not row:
+                        raise IngestionError("This saved job cannot be narrowed after extraction.")
+                    cursor.execute(
+                        """
+                        UPDATE documents
+                        SET selected_page_start = %s, selected_page_end = %s, updated_at = now()
+                        WHERE document_id = %s
+                        """,
+                        (page_start, page_end, row[0]),
+                    )
+        except IngestionError:
+            raise
+        except self.psycopg.Error as exc:
+            raise IngestionError("Could not update the saved processing page range.") from exc
+
     def finish_extraction(
         self,
         job_id: uuid.UUID,
@@ -806,8 +844,6 @@ def resume_extraction_job(
         )
     if saved_request.engine != request.engine:
         raise IngestionError("Resume with the extraction engine recorded in the job checkpoint.")
-    if (saved_request.page_start, saved_request.page_end) != (request.page_start, request.page_end):
-        raise IngestionError("Resume using the same page range recorded for this job.")
     registration = Registration(
         document_id=registered_document_id,
         job_id=job_id,
@@ -815,4 +851,6 @@ def resume_extraction_job(
         checksum=checksum,
         duplicate=False,
     )
-    return run_extraction_job(request, registration, store, object_store, batch_size)
+    # The checkpoint is authoritative. Researchers should not need to remember
+    # the original page range when retrying the same uploaded PDF.
+    return run_extraction_job(saved_request, registration, store, object_store, batch_size)

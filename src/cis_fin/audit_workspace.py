@@ -18,7 +18,7 @@ def save_evaluation(settings, document_id, company, question_id, question, dimen
         import psycopg
         with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=5) as connection:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT company_id, document_checksum FROM documents WHERE document_id = %s", (uuid.UUID(str(document_id)),))
+                cursor.execute("SELECT company_id, checksum FROM documents WHERE document_id = %s", (uuid.UUID(str(document_id)),))
                 row = cursor.fetchone()
                 if not row:
                     raise AuditWorkspaceError("The source document was not found.")

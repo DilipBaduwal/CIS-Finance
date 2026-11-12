@@ -273,16 +273,23 @@ class PostgresVectorStore:
         model: str,
         version: str,
         limit: int,
+        max_page_end: Optional[int] = None,
     ) -> Sequence[VectorChunk]:
         try:
             with self.psycopg.connect(self.dsn, connect_timeout=20) as connection:
                 with connection.cursor() as cursor:
+                    page_filter = "" if max_page_end is None else " AND ch.page_end <= %s"
+                    params = [document_id]
+                    if max_page_end is not None:
+                        params.append(max_page_end)
+                    params.extend((collection, model, version, limit))
                     cursor.execute(
                         """
                         SELECT ch.chunk_id, ch.chunk_text, ch.document_id, ch.company_id,
                                ch.page_start, ch.page_end
                         FROM chunks AS ch
                         WHERE ch.document_id = %s
+                                                    {page_filter}
                           AND NOT EXISTS (
                               SELECT 1 FROM embedding_registry AS er
                               WHERE er.chunk_id = ch.chunk_id
@@ -293,8 +300,8 @@ class PostgresVectorStore:
                           )
                         ORDER BY ch.chunk_index
                         LIMIT %s
-                        """,
-                        (document_id, collection, model, version, limit),
+                        """.format(page_filter=page_filter),
+                        tuple(params),
                     )
                     rows = cursor.fetchall()
                     chunks = []
@@ -496,6 +503,7 @@ def index_document_chunks(
     qdrant: Optional[QdrantRestClient] = None,
     batch_size: int = 16,
     progress_callback=None,
+    max_page_end: Optional[int] = None,
 ) -> int:
     if not 1 <= batch_size <= MAX_VECTOR_BATCH:
         raise VectorIndexError("Embedding batch size must be between 1 and {}.".format(MAX_VECTOR_BATCH))
@@ -507,13 +515,23 @@ def index_document_chunks(
     qdrant.ensure_collection(settings.qdrant_collection, EXPECTED_EMBEDDING_DIMENSIONS)
     total = 0
     while True:
-        chunks = store.pending_chunks(
-            document_id,
-            settings.qdrant_collection,
-            embedder.model,
-            settings.qdrant_embedding_version,
-            batch_size,
-        )
+        if max_page_end is None:
+            chunks = store.pending_chunks(
+                document_id,
+                settings.qdrant_collection,
+                embedder.model,
+                settings.qdrant_embedding_version,
+                batch_size,
+            )
+        else:
+            chunks = store.pending_chunks(
+                document_id,
+                settings.qdrant_collection,
+                embedder.model,
+                settings.qdrant_embedding_version,
+                batch_size,
+                max_page_end,
+            )
         if not chunks:
             return total
         store.stage(

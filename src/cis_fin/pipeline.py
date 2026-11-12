@@ -136,6 +136,13 @@ class PipelineJobStore:
                 "Could not claim the downstream job ({}). Verify PostgreSQL access and retry.".format(type(exc).__name__)
             ) from exc
 
+    def page_end(self, job_id: uuid.UUID) -> Optional[int]:
+        with self.store._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT checkpoint->>'selected_page_end' FROM processing_jobs WHERE job_id = %s", (job_id,))
+                row = cursor.fetchone()
+        return int(row[0]) if row and row[0] else None
+
     def cancellation_requested(self, job_id: uuid.UUID) -> bool:
         with self.store._connect() as connection:
             with connection.cursor() as cursor:
@@ -487,6 +494,7 @@ def process_document_pipeline(
     """Run all bounded post-extraction stages; each stage is idempotent and checkpointed."""
     job_store = PipelineJobStore(settings)
     document_id = job_store.claim(job_id)
+    max_page_end = getattr(job_store, "page_end", lambda _job_id: None)(job_id)
     try:
         initial_progress = get_document_progress(settings, document_id)
     except IngestionError:
@@ -538,6 +546,7 @@ def process_document_pipeline(
                     if progress_callback
                     else None
                 ),
+                max_page_end=max_page_end,
             )
             questions_processed += result.chunks_processed
             candidates_created += result.candidates_created
@@ -558,6 +567,7 @@ def process_document_pipeline(
         newly_indexed = index_document_chunks(
             settings,
             document_id,
+            max_page_end=max_page_end,
             progress_callback=(
                 lambda count: progress_callback("Indexed {} additional chunks in Qdrant…".format(count))
                 if progress_callback

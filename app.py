@@ -21,7 +21,13 @@ from cis_fin.company_queries import (
 )
 from cis_fin.companies import register_detected_company
 from cis_fin.connectivity import check_database, check_qdrant, check_storage
-from cis_fin.extraction import ExtractionError, available_extractors, pdf_page_count, stream_pdf_pages
+from cis_fin.extraction import (
+    ExtractionError,
+    available_extractors,
+    extract_opening_pages_with_fallback,
+    pdf_page_count,
+    stream_pdf_pages,
+)
 from cis_fin.page_index import detect_header_entries, detect_index_entries, map_printed_pages_to_pdf, merge_page_ranges
 from cis_fin.ingestion import (
     DocumentRequest,
@@ -305,9 +311,8 @@ st.caption("Company and report details are detected from the PDF and verified ag
 engine = st.selectbox(
     "Extraction engine",
     options=available_extractors(),
-    index=available_extractors().index(settings.extractor)
-    if settings.extractor in available_extractors()
-    else 0,
+    index=available_extractors().index("docling"),
+    key="extraction_engine_docling_default",
 )
 if engine == "mineru":
     st.warning("MinerU is not integrated in this release. Select Docling or PyMuPDF.")
@@ -410,14 +415,14 @@ if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
             if st.session_state.get("index_analysis_signature") != index_signature:
                 # Docling is expensive to initialize. Read the first seven pages
                 # once and reuse the result for TOC detection and metadata.
-                index_pages = list(
-                    stream_pdf_pages(
-                        inspect_path,
-                        engine=engine,
-                        page_start=1,
-                        page_end=opening_page_limit,
-                    )
+                inspection_engine, index_pages = extract_opening_pages_with_fallback(
+                    inspect_path, engine, opening_page_limit
                 )
+                if inspection_engine != engine:
+                    st.warning(
+                        "Docling did not return readable opening-page text, so PyMuPDF was used for metadata detection. "
+                        "Docling remains selected for report processing."
+                    )
                 detected_index_entries = detect_index_entries(index_pages)
                 st.session_state["detected_index_entries"] = detected_index_entries
                 st.session_state["opening_source_text"] = "\n\n".join(
@@ -426,7 +431,7 @@ if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
                     if page.text.strip()
                 )
                 st.session_state["company_opening_text"] = "\n".join(
-                    page.text for page in index_pages[:2]
+                    page.text for page in index_pages
                 )
                 st.session_state["index_analysis_signature"] = index_signature
             detected_index_entries = st.session_state.get("detected_index_entries", [])
@@ -449,7 +454,7 @@ if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
                                 settings.ollama_base_url,
                                 settings.ollama_model,
                                 page_limit=opening_page_limit,
-                                engine=engine,
+                                engine=inspection_engine,
                                 source_text=st.session_state.get("opening_source_text", ""),
                             )
                         except ReportMetadataError as model_error:
@@ -464,16 +469,19 @@ if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
                     company_opening_text = st.session_state.get("company_opening_text", "")
                 master_company = None
                 try:
-                    master_company = find_master_equity_in_text(company_opening_text)
+                    # Prefer an unambiguous issuer in the uploaded filename.
+                    # Qwen can mistake a hospital, customer, or peer mentioned
+                    # in the report for the report issuer.
+                    master_company = find_master_equity_hint(uploaded_pdf.name)
                 except NiftyLookupError:
                     try:
                         master_company = lookup_master_equity(metadata.company_name, metadata.ticker_symbol)
                     except NiftyLookupError:
                         try:
-                            master_company = lookup_local_nifty500(metadata.company_name, metadata.ticker_symbol)
+                            master_company = find_master_equity_in_text(company_opening_text)
                         except NiftyLookupError:
                             try:
-                                master_company = find_master_equity_hint(uploaded_pdf.name)
+                                master_company = lookup_local_nifty500(metadata.company_name, metadata.ticker_symbol)
                             except NiftyLookupError:
                                 try:
                                     master_company = lookup_local_nifty500(uploaded_pdf.name)
@@ -483,8 +491,8 @@ if uploaded_pdf and uploaded_pdf.size <= 100 * 1024 * 1024:
                 detected = {
                     "company_name_input": reference_company.company_name if reference_company else metadata.company_name,
                     "ticker_symbol_input": reference_company.symbol if reference_company else metadata.ticker_symbol,
-                    "sector_input": reference_company.sector if reference_company else metadata.sector,
-                    "industry_input": reference_company.industry if reference_company else metadata.industry,
+                    "sector_input": (reference_company.sector or metadata.sector) if reference_company else metadata.sector,
+                    "industry_input": (reference_company.industry or metadata.industry) if reference_company else metadata.industry,
                     "document_title_input": metadata.document_title or uploaded_pdf.name.rsplit(".", 1)[0],
                     "document_type_input": (
                         metadata.document_type
@@ -755,6 +763,22 @@ if submitted:
                 )
                 st.session_state["last_ingested_document_id"] = str(result.document_id)
                 pipeline_result = None
+                if result.duplicate and result.existing_stage in (
+                    "registered",
+                    "stored",
+                    "extracted",
+                    "chunked",
+                    "questions",
+                    "embedded",
+                    "indexed",
+                ):
+                    # A repeated upload can intentionally expand or narrow the
+                    # saved page window before extraction or downstream resume.
+                    postgres_store.update_processing_page_range(
+                        result.job_id,
+                        int(selected_page_start),
+                        int(selected_page_end),
+                    )
                 if (
                     result.duplicate
                     and result.existing_status in ("failed", "retry_wait", "cancelled")
