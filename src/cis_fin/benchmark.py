@@ -28,6 +28,8 @@ def normalize_industry(value: str) -> str:
         return "Telecommunications"
     if "steel" in text:
         return "Steel"
+    if "healthcare" in text or "pharmaceutical" in text or "drugs" in text:
+        return "Healthcare"
     if "retail" in text or "consumer services" in text:
         return "Consumer Services"
     return text.title()

@@ -99,6 +99,67 @@ def list_active_companies(settings: Settings) -> List[Tuple[str, str, str, str, 
         ) from exc
 
 
+def export_chunk_questions_scores(settings: Settings, industry: str = "", fiscal_year: str = "") -> List[dict]:
+    """Export stored chunks with linked questions/evidence and reviewed scores."""
+    if not settings.database_url:
+        raise CompanyLookupError("Set DATABASE_URL in the local .env file.")
+    try:
+        import psycopg
+    except ImportError as exc:
+        raise CompanyLookupError("PostgreSQL driver is missing; install requirements.txt.") from exc
+    industry_filter = ""
+    params = []
+    if industry:
+        if str(industry).strip().casefold() in {"healthcare", "pharmaceuticals"}:
+            industry_filter = " AND lower(c.industry) IN ('healthcare', 'pharmaceuticals')"
+        else:
+            industry_filter = " AND lower(c.industry) = lower(%s)"
+            params.append(industry)
+    year_filter = ""
+    if fiscal_year:
+        year_filter = " AND regexp_replace(coalesce(d.fiscal_year, ''), '[^0-9]', '', 'g') = regexp_replace(%s, '[^0-9]', '', 'g')"
+        params.append(fiscal_year)
+    try:
+        with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=10) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT c.symbol, c.company_name, c.industry, d.fiscal_year,
+                           d.document_title, d.processing_status,
+                           ch.chunk_id::text, ch.chunk_index, ch.page_start, ch.page_end, ch.chunk_text,
+                           q.question_id::text, q.question_text, q.dimension,
+                           q.validation_status, q.review_status, ev.evidence_quote,
+                           ev.semantic_support_status,
+                           COALESCE(ai.score, review.audit_ai_score) AS ai_score,
+                           review.human_score AS latest_reviewed_score
+                    FROM chunks ch
+                    JOIN documents d ON d.document_id = ch.document_id
+                    JOIN companies c ON c.company_id = ch.company_id
+                    LEFT JOIN chunk_question_evidence ev ON ev.chunk_id = ch.chunk_id
+                    LEFT JOIN questions q ON q.question_id = ev.question_id
+                    LEFT JOIN LATERAL (
+                        SELECT score FROM score_traces
+                        WHERE question_id = q.question_id AND document_id = d.document_id
+                        ORDER BY created_at DESC LIMIT 1
+                    ) ai ON true
+                    LEFT JOIN LATERAL (
+                        SELECT expected_score AS human_score, given_score AS audit_ai_score
+                        FROM audit_rows
+                        WHERE question = q.question_text AND chunk_id = ch.chunk_id
+                        ORDER BY created_at DESC LIMIT 1
+                    ) review ON true
+                    WHERE d.processing_status = 'completed'
+                    """ + industry_filter + year_filter + """
+                    ORDER BY c.symbol, d.document_id, ch.chunk_index, q.generated_at NULLS LAST
+                    """,
+                    params,
+                )
+                columns = [item.name for item in cursor.description]
+                return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    except psycopg.Error as exc:
+        raise CompanyLookupError("Could not export chunk/question data ({}). Verify database read permissions.".format(type(exc).__name__)) from exc
+
+
 def export_document_chunks(settings: Settings, document_id: uuid.UUID) -> List[dict]:
     if not settings.database_url:
         raise CompanyLookupError("Set DATABASE_URL in the local .env file.")

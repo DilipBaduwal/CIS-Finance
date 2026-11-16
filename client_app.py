@@ -3,6 +3,8 @@
 Run with: ``streamlit run client_app.py``
 """
 import json
+import csv
+import io
 import sys
 import tempfile
 import re
@@ -16,7 +18,7 @@ from cis_fin.automatic_features import score_document_themes_with_llm
 from cis_fin.benchmark import normalize_industry, normalize_fiscal_year
 from cis_fin.extraction import extract_pdf, iter_chunks
 from cis_fin.settings import Settings
-from cis_fin.company_queries import export_document_chunks, list_recent_documents, CompanyLookupError
+from cis_fin.company_queries import export_document_chunks, export_chunk_questions_scores, list_recent_documents, CompanyLookupError
 
 
 st.set_page_config(page_title="CIS-FIN Client Benchmark", page_icon="📊", layout="wide")
@@ -122,8 +124,49 @@ def company_evidence_from_database(company, question):
         return None
 
 
+def load_master_healthcare_companies():
+    path = Path("BSE NSE MasterEquity list.csv")
+    if not path.exists():
+        return []
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    terms = {"healthcare", "pharmaceuticals", "drugs & pharmaceuticals", "healthcare service provider"}
+    return [row for row in rows if str(row.get("Sector Name", "")).strip().lower() in terms or str(row.get("Industry Name", "")).strip().lower() in terms]
+
+
+def uploaded_reports_snapshot():
+    try:
+        # The shared read-only query intentionally caps this at 100 rows.
+        rows = list_recent_documents(Settings.from_env(), limit=100)
+        return rows, None
+    except CompanyLookupError as exc:
+        return [], str(exc)
+
+
+def industry_matches(selected: str, stored: str) -> bool:
+    selected = normalize_industry(selected)
+    stored = normalize_industry(stored)
+    if selected in {"Healthcare", "Pharmaceuticals"}:
+        return stored in {"Healthcare", "Pharmaceuticals"}
+    return selected == stored
+
+
 st.markdown('<div class="hero"><h1>AI readiness by industry</h1><p>TOE framework · evidence-grounded scores · same industry and fiscal year</p></div>', unsafe_allow_html=True)
 st.markdown('<div class="step-strip"><div class="step"><strong>1 · Choose your industry</strong>Select the peer group and year.</div><div class="step"><strong>2 · Review the benchmark</strong>See the industry score and TOE factors.</div><div class="step"><strong>3 · Explore the evidence</strong>Open any question and inspect company evidence.</div></div>', unsafe_allow_html=True)
+with st.expander("Uploaded reports and BSE/NSE company list", expanded=True):
+    uploaded_rows, upload_error = uploaded_reports_snapshot()
+    if upload_error:
+        st.warning("Uploaded-report database is currently unavailable: {}".format(upload_error))
+    else:
+        st.metric("Completed reports in database", sum(1 for row in uploaded_rows if str(row[5]).lower() == "completed"))
+        if uploaded_rows:
+            st.dataframe([{"Company": row[2], "Industry": row[3], "Fiscal year": row[4], "Status": row[5]} for row in uploaded_rows], use_container_width=True, hide_index=True)
+        else:
+            st.info("No uploaded reports are registered yet.")
+    healthcare_rows = load_master_healthcare_companies()
+    st.caption("{} healthcare/pharmaceutical companies found in BSE NSE MasterEquity list.csv. This is the reference universe; companies appear as uploaded only after their reports are processed.".format(len(healthcare_rows)))
+    if healthcare_rows:
+        st.dataframe([{"Issuer": row.get("Issuer Name"), "BSE Code": row.get("BSE Code"), "NSE Code": row.get("NSE Code"), "Sector": row.get("Sector Name"), "Industry": row.get("Industry Name")} for row in healthcare_rows], use_container_width=True, hide_index=True)
 NSE_INDUSTRIES = [
     "Information Technology", "FMCG", "Banking", "Financial Services", "Insurance",
     "Pharmaceuticals", "Healthcare", "Automobiles", "Auto Components", "Chemicals",
@@ -138,9 +181,39 @@ mode = st.radio("Choose an assessment", ["Industry benchmark", "Assess annual re
 if not industry:
     st.markdown('<div class="helper"><b>Start here</b><br>Choose an industry above to see how companies in that sector compare on AI readiness.</div>', unsafe_allow_html=True)
 else:
+    if st.button("Prepare chunk + question + score CSV", key="prepare_chunk_export"):
+        try:
+            export_rows = export_chunk_questions_scores(Settings.from_env(), industry=industry, fiscal_year=year)
+            output = io.StringIO()
+            columns = ["symbol", "company_name", "industry", "fiscal_year", "document_title", "processing_status", "chunk_id", "chunk_index", "page_start", "page_end", "chunk_text", "question_id", "question_text", "dimension", "validation_status", "review_status", "evidence_quote", "semantic_support_status", "ai_score", "latest_reviewed_score"]
+            writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
+            writer.writeheader(); writer.writerows(export_rows)
+            st.download_button("Download CSV", output.getvalue(), file_name="cis_fin_{}_{}_chunks_questions_scores.csv".format(industry.lower().replace(" ", "_"), year.replace("/", "-")), mime="text/csv", key="download_chunk_export")
+            st.caption("{} exported rows. AI and human-reviewed scores are separate; blank values mean that score has not been recorded.".format(len(export_rows)))
+        except CompanyLookupError as exc:
+            st.error(str(exc))
     benchmark = find_benchmark(industry, year)
     if not benchmark:
         st.warning("No same-industry/year benchmark is available yet.")
+        uploaded_rows, upload_error = uploaded_reports_snapshot()
+        if upload_error:
+            st.error("The app could not read uploaded reports from PostgreSQL: {}".format(upload_error))
+            st.info("This is a database connectivity problem, not a missing Healthcare company list. Verify DATABASE_URL/network access, then refresh the app.")
+        else:
+            matching = [
+                row for row in uploaded_rows
+                if industry_matches(industry, row[3])
+                and (not year or normalize_fiscal_year(row[4]) == normalize_fiscal_year(year))
+            ]
+            completed = [row for row in matching if str(row[5]).lower() == "completed"]
+            st.subheader("Uploaded Healthcare reports")
+            st.caption("{} completed report(s) found for {} / {}. Benchmark scoring is not required to view uploads.".format(len(completed), normalize_industry(industry), normalize_fiscal_year(year)))
+            if completed:
+                st.dataframe([{"Company": row[2], "Industry": row[3], "Fiscal year": row[4], "Status": row[5]} for row in completed], use_container_width=True, hide_index=True)
+            elif matching:
+                st.dataframe([{"Company": row[2], "Industry": row[3], "Fiscal year": row[4], "Status": row[5]} for row in matching], use_container_width=True, hide_index=True)
+            else:
+                st.info("No completed Healthcare reports matched this fiscal year. Check that ingestion finished with status 'completed' and that the fiscal year is entered as YYYY-YYYY.")
     elif mode == "Industry benchmark":
         themes = benchmark.get("themes", [])
         # Version metadata intentionally stores the immutable question identity;

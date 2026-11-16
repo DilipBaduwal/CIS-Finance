@@ -8,6 +8,7 @@ from typing import Callable, Optional
 
 from cis_fin.ingestion import IngestionError, PostgresIngestionStore
 from cis_fin.questions import QuestionGenerationError, generate_document_questions
+from cis_fin.automatic_scoring import score_pending_evidence
 from cis_fin.settings import Settings
 from cis_fin.vector_index import VectorIndexError, index_document_chunks
 
@@ -562,6 +563,18 @@ def process_document_pipeline(
                     )
                 )
         job_store.checkpoint(job_id, "questions")
+        if progress_callback:
+            progress_callback("Scoring generated evidence with Ollama and saving scores…")
+        score_pending_evidence(
+            settings,
+            document_id=document_id,
+            progress_callback=(
+                lambda current, total, scored, skipped, failed: progress_callback(
+                    "OLLAMA_SCORE_PROGRESS|{}|{}".format(current, total)
+                )
+                if progress_callback else None
+            ),
+        )
         if progress_callback:
             progress_callback("Embedding chunks locally and indexing them in Qdrant…")
         newly_indexed = index_document_chunks(

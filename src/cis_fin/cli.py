@@ -20,6 +20,7 @@ from cis_fin.ingestion import (
 from cis_fin.migrations import MigrationError, run_migrations
 from cis_fin.pipeline import PipelineProcessingError, process_document_pipeline
 from cis_fin.questions import QuestionGenerationError, generate_document_questions
+from cis_fin.automatic_scoring import score_pending_evidence
 from cis_fin.settings import Settings
 from cis_fin.storage import ObjectStoreError, S3ObjectStore
 from cis_fin.vector_index import (
@@ -119,6 +120,10 @@ def main(argv: Sequence[str] = None) -> int:
     )
     question_parser.add_argument("--document-id", type=uuid.UUID, required=True)
     question_parser.add_argument("--limit", type=int, default=10, help="Maximum chunks to process (1-100)")
+    score_parser = subparsers.add_parser(
+        "score-pending", help="Score all generated evidence questions with Ollama and save scores"
+    )
+    score_parser.add_argument("--document-id", type=uuid.UUID)
     company_parser = subparsers.add_parser(
         "add-company",
         help="Add one company using owner-verified constituent and classification data",
@@ -192,6 +197,18 @@ def main(argv: Sequence[str] = None) -> int:
                 result.invalid_candidates,
             )
         )
+        return 0
+
+    if args.command == "score-pending":
+        try:
+            result = score_pending_evidence(Settings.from_env(), document_id=args.document_id,
+                                            progress_callback=lambda current, total, scored, skipped, failed:
+                                            print("Scored {}/{}; saved {}, skipped {}, failed {}".format(
+                                                current, total, scored, skipped, failed), flush=True))
+        except Exception as exc:
+            print("ERROR: {}".format(exc))
+            return 1
+        print("COMPLETE: {}".format(result))
         return 0
 
     if args.command == "process-job":

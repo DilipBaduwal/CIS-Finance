@@ -15,7 +15,7 @@ from cis_fin.pilot_regression import train_pilot
 
 def _refresh_feature_model(settings, themes, industry="Information Technology", fiscal_year="2025-2026", symbols=None):
     """Rebuild the cohort feature matrix from every completed matching report."""
-    documents = list_recent_documents(settings, limit=500)
+    documents = list_recent_documents(settings, limit=100)
     company_industries = {row[1]: (row[4] or "") for row in list_active_companies(settings)}
     normalized_year = fiscal_year.replace('-', '').replace('/', '')
     allowed = set(symbols or [])
