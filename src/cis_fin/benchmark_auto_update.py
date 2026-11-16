@@ -13,6 +13,62 @@ from cis_fin.automatic_features import build_features_from_document
 from cis_fin.pilot_regression import train_pilot
 
 
+def _persist_healthcare_question_registry(settings, benchmark):
+    """Keep the strongest ten regenerated questions active per TOE dimension."""
+    if str(benchmark.get("industry", "")).casefold() != "healthcare":
+        return {"status": "skipped", "reason": "healthcare_registry_only"}
+    import psycopg
+
+    themes = [theme for theme in benchmark.get("themes", []) if theme.get("question")]
+    ranked = sorted(
+        themes,
+        key=lambda item: (
+            int(item.get("support_count", 0)),
+            len(item.get("chunk_ids", [])),
+        ),
+        reverse=True,
+    )
+    selected = []
+    counts = {}
+    for theme in ranked:
+        dimension = theme.get("toe_dimension", "unknown")
+        if counts.get(dimension, 0) >= 10:
+            continue
+        counts[dimension] = counts.get(dimension, 0) + 1
+        selected.append(theme)
+    with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=8) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE healthcare_benchmark_questions SET question_status='replaced', updated_at=now() WHERE question_status='active'"
+            )
+            for index, theme in enumerate(selected):
+                strength = int(theme.get("support_count", 0)) * 1000 + len(theme.get("chunk_ids", []))
+                cursor.execute(
+                    """
+                    INSERT INTO healthcare_benchmark_questions
+                        (benchmark_source, fiscal_year, theme_index, toe_dimension, question_text,
+                         theme, support_count, supporting_companies, chunk_ids,
+                         representative_chunk_id, representative_pages, question_status, strength_score)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s::jsonb,'active',%s)
+                    ON CONFLICT (benchmark_source, theme_index) DO UPDATE SET
+                        fiscal_year=EXCLUDED.fiscal_year, toe_dimension=EXCLUDED.toe_dimension,
+                        question_text=EXCLUDED.question_text, theme=EXCLUDED.theme,
+                        support_count=EXCLUDED.support_count, supporting_companies=EXCLUDED.supporting_companies,
+                        chunk_ids=EXCLUDED.chunk_ids, representative_chunk_id=EXCLUDED.representative_chunk_id,
+                        representative_pages=EXCLUDED.representative_pages, question_status='active',
+                        strength_score=EXCLUDED.strength_score, updated_at=now()
+                    """,
+                    (
+                        "healthcare_ai_readiness", benchmark.get("fiscal_year", "2025-2026"), index,
+                        theme.get("toe_dimension", "unknown"), theme["question"],
+                        theme.get("theme", theme["question"]), int(theme.get("support_count", 0)),
+                        json.dumps(theme.get("supporting_companies", [])), json.dumps(theme.get("chunk_ids", [])),
+                        theme.get("representative_chunk_id"), json.dumps(theme.get("representative_pages", [])), strength,
+                    ),
+                )
+    return {"status": "updated", "active_questions": len(selected), "replaced_previous": True}
+
+
 def _refresh_feature_model(settings, themes, industry="Information Technology", fiscal_year="2025-2026", symbols=None):
     """Rebuild the cohort feature matrix from every completed matching report."""
     documents = list_recent_documents(settings, limit=100)

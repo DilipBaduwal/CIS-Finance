@@ -24,36 +24,40 @@ from cis_fin.company_queries import export_document_chunks, export_chunk_questio
 st.set_page_config(page_title="CIS-FIN Client Benchmark", page_icon="📊", layout="wide")
 st.markdown("""
 <style>
-html, body, [data-testid="stAppViewContainer"] { background: #f7f6f1; color: #20242a; }
-[data-testid="stHeader"] { background: #1d1f21; }
+html, body, [data-testid="stAppViewContainer"] { background: #f5f7fb; color: #172033; }
+[data-testid="stHeader"] { background: #f5f7fb; }
 section[data-testid="stSidebar"] { display: none !important; }
-[data-testid="stWidgetLabel"] p, [data-testid="stWidgetLabel"] label, [data-testid="stMarkdownContainer"] p { color: #4e555d !important; }
-[data-testid="stTextInput"] input { background: #ffffff !important; color: #20242a !important; border: 1px solid #c9c5ba !important; }
+[data-testid="stWidgetLabel"] p, [data-testid="stWidgetLabel"] label, [data-testid="stMarkdownContainer"] p { color: #62708a !important; }
+[data-testid="stTextInput"] input, [data-baseweb="select"] > div { background: #ffffff !important; color: #172033 !important; border: 1px solid #dce3ef !important; border-radius: 10px !important; }
 [data-testid="stFileUploader"] section { background: #ffffff !important; border: 1px solid #c9c5ba !important; }
 [data-testid="stRadio"] label { color: #3e454d !important; }
 [data-testid="stAlert"] p { color: #263746 !important; }
-.stButton > button { background: #20242a; color: #ffffff; border-radius: 10px; border: 0; padding: .65rem 1.2rem; }
-.stButton > button:hover { background: #32648f; color: #ffffff; }
-.stButton > button[kind="secondary"] { background: #ffffff; color: #20242a; border: 1px solid #c9c5ba; }
-.step-strip { display:flex; gap:.8rem; margin:1.2rem 0 1.5rem; }
-.step { flex:1; background:#fff; border:1px solid #ddd9ce; border-radius:12px; padding:.8rem 1rem; color:#626a72; }
-.step strong { display:block; color:#20242a; margin-bottom:.2rem; }
-.helper { background:#eef4f7; border-radius:12px; padding:1rem 1.2rem; color:#3e596b; margin:1rem 0; }
-.block-container { max-width: 1450px; padding: 2.8rem 2.5rem 5rem; }
-h1, h2, h3 { font-family: Georgia, serif; color: #20242a; }
-.hero { background: #f7f6f1; padding: 1rem 0 1.8rem; border-bottom: 1px solid #d8d5ca; }
-.hero h1 { font-size: 3.5rem; margin: 0; letter-spacing: -2px; }
-.hero p { color: #626a72; font-size: 1.15rem; margin: .3rem 0 0; }
-.card { background: #fff; border: 1px solid #ddd9ce; border-radius: 18px; padding: 1.6rem 1.8rem; box-shadow: 0 2px 8px #262b3210; min-height: 150px; }
-.eyebrow { color: #626a72; font-size: 1rem; }
-.big-score { font: 5.7rem Georgia, serif; line-height: 1; margin-top: .4rem; }
-.muted { color: #626a72; }
-.section { background: #fff; border: 1px solid #ddd9ce; border-radius: 18px; padding: 1.5rem 1.8rem; margin-top: 1.4rem; }
+.stButton > button { background: #2457d6 !important; color: #ffffff !important; border-radius: 10px; border: 0; padding: .65rem 1.2rem; font-weight: 650; }
+.stButton > button p, .stButton > button span, .stButton > button div { color: #ffffff !important; }
+.stButton > button:hover { background: #173ea7 !important; color: #ffffff !important; }
+.stButton > button[kind="secondary"] { background: #ffffff !important; color: #2457d6 !important; border: 1px solid #cdd8ee; }
+.step-strip { display:flex; gap:.8rem; margin:1rem 0 1.25rem; }
+.step { flex:1; background:#fff; border:1px solid #e1e7f1; border-radius:14px; padding:.8rem 1rem; color:#62708a; box-shadow: 0 5px 18px #243b6b0a; }
+.step strong { display:block; color:#172033; margin-bottom:.2rem; }
+.helper { background:#edf3ff; border-radius:14px; padding:1rem 1.2rem; color:#31518b; margin:1rem 0; }
+.block-container { max-width: 1380px; padding: 2rem 2.5rem 5rem; }
+h1, h2, h3 { font-family: Inter, sans-serif; color: #172033; letter-spacing: -.02em; }
+.hero { background: linear-gradient(135deg,#14264d 0%,#2457d6 100%); padding: 2.2rem 2.3rem; border-radius: 22px; color:#fff; box-shadow: 0 16px 40px #1e3b7a25; }
+.hero h1 { color:#fff; font-size: 3.15rem; margin: 0; letter-spacing: -2px; }
+.hero p { color: #dce7ff !important; font-size: 1.08rem; margin: .45rem 0 0; }
+.card { background: #fff; border: 1px solid #e1e7f1; border-radius: 18px; padding: 1.35rem 1.5rem; box-shadow: 0 8px 24px #243b6b0d; min-height: 150px; }
+.eyebrow { color: #62708a; font-size: .8rem; text-transform: uppercase; letter-spacing: .09em; font-weight: 700; }
+.big-score { font: 4.8rem Inter, sans-serif; font-weight: 750; color:#173ea7; line-height: 1; margin-top: .45rem; }
+.muted { color: #62708a; }
+.section { background: #fff; border: 1px solid #e1e7f1; border-radius: 18px; padding: 1.35rem 1.5rem; margin-top: 1.25rem; box-shadow: 0 8px 24px #243b6b0d; }
 .factor { display: grid; grid-template-columns: 27% 53% 20%; align-items: center; gap: 1rem; padding: .8rem 0; border-top: 1px solid #ebe8df; }
-.bar { height: 13px; background: #e7e4db; border-radius: 99px; overflow: hidden; }
-.fill { height: 100%; border-radius: 99px; background: #32648f; }
+.bar { height: 11px; background: #e7edf7; border-radius: 99px; overflow: hidden; }
+.fill { height: 100%; border-radius: 99px; background: #2457d6; }
 .factor-value { font-size: 1.05rem; text-align: right; }
 .subhead { font-weight: 700; margin: 1.2rem 0 .3rem; font-size: 1.1rem; }
+.hero-kicker { text-transform: uppercase; letter-spacing: .12em; font-size: .75rem; color: #32648f; font-weight: 700; }
+.insight { background: #eef4f7; border-left: 4px solid #32648f; border-radius: 12px; padding: .9rem 1.1rem; color: #3e596b; }
+.score-label { color:#626a72; font-size:.9rem; text-transform:uppercase; letter-spacing:.08em; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -69,6 +73,14 @@ def find_benchmark(industry, year):
             if normalize_industry(industry) == "Information Technology" and any(company in {"TATASTEEL", "TRENT"} for company in item.get("companies", [])):
                 continue
             return item
+    industry_key = normalize_industry(industry).lower().replace(" ", "_")
+    generated = Path("artifacts/{}_ai_readiness_benchmark_{}.json".format(industry_key, normalized_year))
+    if generated.exists():
+        return json.loads(generated.read_text(encoding="utf-8"))
+    if normalize_industry(industry) == "Information Technology":
+        generated = Path("artifacts/it_ai_readiness_benchmark_{}.json".format(normalized_year))
+        if generated.exists():
+            return json.loads(generated.read_text(encoding="utf-8"))
     fallback = Path("artifacts/it_ai_readiness_benchmark_2025-2026.final.json")
     if fallback.exists() and normalize_industry(industry) == "Information Technology":
         return json.loads(fallback.read_text(encoding="utf-8"))
@@ -83,9 +95,13 @@ def find_regression_matrix(benchmark=None):
     """
     candidates = []
     if benchmark:
+        industry_key = normalize_industry(benchmark.get("industry", "")).lower().replace(" ", "_")
         version_number = benchmark.get("version_number")
         if version_number:
-            candidates.append(Path("artifacts/it_ai_readiness_regression_matrix_v{}.json".format(version_number)))
+            candidates.append(
+                Path("artifacts/{}_ai_readiness_regression_matrix_v{}.json".format(industry_key, version_number))
+            )
+        candidates.append(Path("artifacts/{}_ai_readiness_regression_matrix.json".format(industry_key)))
     candidates.append(Path("artifacts/it_ai_readiness_regression_matrix.json"))
     for path in candidates:
         if path.exists():
@@ -99,6 +115,15 @@ def benchmark_matrix_rows(matrix, benchmark):
     if not allowed:
         return []
     return [row for row in matrix.get("rows", []) if str(row.get("company", "")).strip().upper() in allowed]
+
+
+def company_overall_scores(matrix, benchmark):
+    result = []
+    for row in benchmark_matrix_rows(matrix, benchmark):
+        values = [value for value in row.get("feature_vector", []) if isinstance(value, (int, float))]
+        if values:
+            result.append({"company": row.get("company", ""), "score": round(sum(values) / len(values) * 20, 1)})
+    return sorted(result, key=lambda item: item["score"], reverse=True)
 
 
 def _question_terms(text):
@@ -151,22 +176,8 @@ def industry_matches(selected: str, stored: str) -> bool:
     return selected == stored
 
 
-st.markdown('<div class="hero"><h1>AI readiness by industry</h1><p>TOE framework · evidence-grounded scores · same industry and fiscal year</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="hero"><div class="hero-kicker" style="color:#bcd0ff">CIS-FIN BENCHMARK</div><h1>AI readiness by industry and companies</h1><p>TOE framework · evidence-grounded scores · same industry and fiscal year</p></div>', unsafe_allow_html=True)
 st.markdown('<div class="step-strip"><div class="step"><strong>1 · Choose your industry</strong>Select the peer group and year.</div><div class="step"><strong>2 · Review the benchmark</strong>See the industry score and TOE factors.</div><div class="step"><strong>3 · Explore the evidence</strong>Open any question and inspect company evidence.</div></div>', unsafe_allow_html=True)
-with st.expander("Uploaded reports and BSE/NSE company list", expanded=True):
-    uploaded_rows, upload_error = uploaded_reports_snapshot()
-    if upload_error:
-        st.warning("Uploaded-report database is currently unavailable: {}".format(upload_error))
-    else:
-        st.metric("Completed reports in database", sum(1 for row in uploaded_rows if str(row[5]).lower() == "completed"))
-        if uploaded_rows:
-            st.dataframe([{"Company": row[2], "Industry": row[3], "Fiscal year": row[4], "Status": row[5]} for row in uploaded_rows], use_container_width=True, hide_index=True)
-        else:
-            st.info("No uploaded reports are registered yet.")
-    healthcare_rows = load_master_healthcare_companies()
-    st.caption("{} healthcare/pharmaceutical companies found in BSE NSE MasterEquity list.csv. This is the reference universe; companies appear as uploaded only after their reports are processed.".format(len(healthcare_rows)))
-    if healthcare_rows:
-        st.dataframe([{"Issuer": row.get("Issuer Name"), "BSE Code": row.get("BSE Code"), "NSE Code": row.get("NSE Code"), "Sector": row.get("Sector Name"), "Industry": row.get("Industry Name")} for row in healthcare_rows], use_container_width=True, hide_index=True)
 NSE_INDUSTRIES = [
     "Information Technology", "FMCG", "Banking", "Financial Services", "Insurance",
     "Pharmaceuticals", "Healthcare", "Automobiles", "Auto Components", "Chemicals",
@@ -176,11 +187,30 @@ NSE_INDUSTRIES = [
 industry_choice = st.selectbox("Industry", ["Select an industry"] + NSE_INDUSTRIES)
 industry = st.text_input("Custom industry", placeholder="Type an industry name") if industry_choice == "Other / custom" else ("" if industry_choice == "Select an industry" else industry_choice)
 year = st.text_input("Fiscal year", value="2025-2026")
-mode = st.radio("Choose an assessment", ["Industry benchmark", "Assess annual report"], horizontal=True)
+selection_key = "{}|{}".format(normalize_industry(industry), normalize_fiscal_year(year))
+if st.session_state.get("comparison_selection_key") != selection_key:
+    st.session_state.pop("comparison_mode", None)
+    st.session_state.pop("comparison_selection_key", None)
 
 if not industry:
     st.markdown('<div class="helper"><b>Start here</b><br>Choose an industry above to see how companies in that sector compare on AI readiness.</div>', unsafe_allow_html=True)
 else:
+    if st.session_state.get("comparison_mode") is None:
+        st.markdown('<div class="section"><div class="hero-kicker">Choose your view</div><h2>How would you like to explore this benchmark?</h2><p class="muted">Select a comparison type before any scores or company information are displayed.</p>', unsafe_allow_html=True)
+        selected_comparison = st.radio(
+            "Comparison type",
+            ["Industry comparison", "Peer comparison"],
+            format_func=lambda value: "Industry comparison — understand the sector TOE score" if value == "Industry comparison" else "Peer comparison — compare companies side by side",
+            key="comparison_choice",
+        )
+        if st.button("Continue to {} →".format(selected_comparison.lower()), type="primary", key="confirm_comparison_mode"):
+            st.session_state["selected_industry"] = industry
+            st.session_state["selected_year"] = year
+            st.session_state["comparison_selection_key"] = selection_key
+            st.switch_page("pages/Peer_Comparison.py" if selected_comparison == "Peer comparison" else "pages/Industry_Comparison.py")
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.stop()
+    comparison_mode = st.session_state.get("comparison_mode")
     if st.button("Prepare chunk + question + score CSV", key="prepare_chunk_export"):
         try:
             export_rows = export_chunk_questions_scores(Settings.from_env(), industry=industry, fiscal_year=year)
@@ -214,15 +244,66 @@ else:
                 st.dataframe([{"Company": row[2], "Industry": row[3], "Fiscal year": row[4], "Status": row[5]} for row in matching], use_container_width=True, hide_index=True)
             else:
                 st.info("No completed Healthcare reports matched this fiscal year. Check that ingestion finished with status 'completed' and that the fiscal year is entered as YYYY-YYYY.")
-    elif mode == "Industry benchmark":
+    elif comparison_mode in ("Industry comparison", "Peer comparison"):
         themes = benchmark.get("themes", [])
         # Version metadata intentionally stores the immutable question identity;
         # enrich the client view with evidence fields from the benchmark artifact.
-        evidence_artifact = Path("artifacts/it_ai_readiness_benchmark_2025-2026.final.json")
+        industry_key = normalize_industry(benchmark.get("industry", industry)).lower().replace(" ", "_")
+        evidence_artifact = Path(
+            "artifacts/{}_ai_readiness_benchmark_{}{}.json".format(
+                industry_key,
+                normalize_fiscal_year(year),
+                ".final" if industry_key == "information_technology" else "",
+            )
+        )
+        if not evidence_artifact.exists() and industry_key == "information_technology":
+            evidence_artifact = Path("artifacts/it_ai_readiness_benchmark_2025-2026.final.json")
         if themes and not themes[0].get("chunk_ids") and evidence_artifact.exists():
             enriched = json.loads(evidence_artifact.read_text(encoding="utf-8")).get("themes", [])
             if len(enriched) >= len(themes):
                 themes = enriched[:len(themes)]
+        matrix = find_regression_matrix(benchmark)
+        if st.session_state.get("client_view") == "question_explorer":
+            if st.button("← Back to industry overview", key="back_from_explorer"):
+                st.session_state.pop("client_view", None)
+                st.rerun()
+            st.markdown('<div class="hero"><div class="hero-kicker">Benchmark explorer</div><h1>Questions and company comparison</h1><p>{} · {}</p></div>'.format(normalize_industry(industry), normalize_fiscal_year(year)), unsafe_allow_html=True)
+            cohort = company_overall_scores(matrix, benchmark)
+            if cohort:
+                options = [item["company"] for item in cohort]
+                left, right = st.columns(2)
+                with left:
+                    company_a = st.selectbox("Compare company A", options, index=0, key="compare_company_a")
+                with right:
+                    company_b = st.selectbox("Compare company B", options, index=min(1, len(options)-1), key="compare_company_b")
+                row_a = next(row for row in benchmark_matrix_rows(matrix, benchmark) if row.get("company") == company_a)
+                row_b = next(row for row in benchmark_matrix_rows(matrix, benchmark) if row.get("company") == company_b)
+                st.markdown('<div class="insight"><b>{}</b> scores {} / 100 versus <b>{}</b> at {} / 100. {} is higher by {} points.</div>'.format(company_a, next(x["score"] for x in cohort if x["company"] == company_a), company_b, next(x["score"] for x in cohort if x["company"] == company_b), company_a if next(x["score"] for x in cohort if x["company"] == company_a) >= next(x["score"] for x in cohort if x["company"] == company_b) else company_b, abs(next(x["score"] for x in cohort if x["company"] == company_a) - next(x["score"] for x in cohort if x["company"] == company_b))), unsafe_allow_html=True)
+                question_rows = []
+                for index, theme in enumerate(themes):
+                    a = row_a.get("features", {}).get("theme_{}".format(index))
+                    b = row_b.get("features", {}).get("theme_{}".format(index))
+                    values = [row.get("features", {}).get("theme_{}".format(index)) for row in benchmark_matrix_rows(matrix, benchmark)]
+                    values = [value for value in values if isinstance(value, (int, float))]
+                    question_rows.append({"#": index + 1, "TOE": theme.get("toe_dimension", "").title(), "Question": theme.get("question", ""), "Industry avg /100": round(sum(values) / len(values) * 20, 1) if values else None, company_a + " /100": round(a * 20, 1) if a is not None else None, company_b + " /100": round(b * 20, 1) if b is not None else None, "Difference": round((a - b) * 20, 1) if a is not None and b is not None else None})
+                st.dataframe(question_rows, use_container_width=True, hide_index=True, height=520)
+                selected_question = st.selectbox("Deep analysis question", [item["Question"] for item in question_rows], key="deep_analysis_question")
+                selected_index = next(index for index, item in enumerate(question_rows) if item["Question"] == selected_question)
+                selected_theme = themes[selected_index]
+                st.markdown('<div class="section"><div class="hero-kicker">Deep analysis</div><h2>{}</h2><p class="muted">Industry average: {} / 100 · {}: {} / 100 · {}: {} / 100</p></div>'.format(selected_question, question_rows[selected_index]["Industry avg /100"], company_a, question_rows[selected_index][company_a + " /100"], company_b, question_rows[selected_index][company_b + " /100"]), unsafe_allow_html=True)
+                for company_name in (company_a, company_b):
+                    records = company_evidence_from_database(company_name, selected_question)
+                    with st.expander("{} evidence".format(company_name), expanded=True):
+                        st.write("Score: {} / 100".format(question_rows[selected_index][company_name + " /100"]))
+                        if records:
+                            for record in records[:2]:
+                                st.caption("Pages {}–{} · {}".format(record.get("page_start", "?"), record.get("page_end", "?"), record.get("chunk_id", "")))
+                                st.write(record.get("chunk_text", "")[:1000])
+                        else:
+                            st.info("Evidence details are not available for this company yet.")
+            else:
+                st.info("Company scores are not available for this benchmark yet.")
+            st.stop()
         if st.session_state.get("client_view") == "factor_detail":
             if st.button("← Back to industry overview", key="client_back_overview"):
                 st.session_state.pop("client_view", None)
@@ -234,7 +315,6 @@ else:
             selected_question = selected_theme.get("question", "Selected TOE factor")
             st.markdown('<div class="hero"><h1>Question detail</h1><p>{} · {} · {}</p></div>'.format(normalize_industry(industry), normalize_fiscal_year(year), selected_theme.get("toe_dimension", "TOE").title()), unsafe_allow_html=True)
             st.markdown('<div class="section"><h2>{}</h2><p class="muted">Scores for this question across every company in the same industry and fiscal year.</p></div>'.format(selected_question), unsafe_allow_html=True)
-            matrix = find_regression_matrix(benchmark)
             feature_name = "theme_{}".format(selected_index)
             company_scores = []
             for company_row in benchmark_matrix_rows(matrix, benchmark):
@@ -262,9 +342,7 @@ else:
                 st.markdown('<div class="card"><div class="eyebrow">{} · {}/100</div><h2>Why this company received this score</h2><p class="muted">This evidence is loaded for the selected company and selected question. Changing the company above changes this section.</p><p><b>Scoring rationale</b></p><p>{}</p><p><b>Supporting chunk IDs</b></p><p>{}</p><p><b>Source evidence</b></p><p>{}</p></div>'.format(selected_company, company_score.get("Score (0–100)", "—"), rationale, ", ".join(chunk_ids) or "Not stored in this artifact", evidence_text), unsafe_allow_html=True)
             st.stop()
         st.markdown('<div class="muted">{} · {} · {} peer companies · {} benchmark factors</div>'.format(normalize_industry(industry), normalize_fiscal_year(year), len(benchmark.get("companies", [])), len(themes)), unsafe_allow_html=True)
-        matrix_path = Path("artifacts/it_ai_readiness_regression_matrix.json")
         rows = []
-        matrix = find_regression_matrix(benchmark)
         if matrix.get("rows"):
             cohort_rows = benchmark_matrix_rows(matrix, benchmark)
             for name in matrix.get("feature_names", []):
@@ -286,6 +364,18 @@ else:
                 value = round(sum(values) / len(values)) if values else 0
                 html += '<div class="factor"><span>{}</span><div class="bar"><div class="fill" style="width:{}%;background:{}"></div></div><b>{}</b></div>'.format(dimension.title(), value, colors[dimension], value)
             st.markdown(html + '</div>', unsafe_allow_html=True)
+        company_rankings = company_overall_scores(matrix, benchmark)
+        if company_rankings:
+            best = company_rankings[0]
+            left, right = st.columns([1, 2])
+            with left:
+                st.markdown('<div class="card"><div class="score-label">Top company</div><h2>{}</h2><div class="big-score">{}</div><div class="muted">/ 100 overall score</div></div>'.format(best["company"], int(best["score"])), unsafe_allow_html=True)
+            with right:
+                st.markdown('<div class="card"><div class="score-label">Cohort snapshot</div><h3>How does the sector compare?</h3><p class="muted">{} companies are ranked across {} benchmark questions. Open the explorer to compare any two companies and inspect the evidence behind each difference.</p>'.format(len(company_rankings), len(themes)), unsafe_allow_html=True)
+                if st.button("Open question explorer →", type="primary", key="open_question_explorer"):
+                    st.session_state["client_view"] = "question_explorer"
+                    st.rerun()
+                st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('<div class="section"><h3>Factors and weights</h3><p class="muted">Scores are calculated from comparable annual-report evidence for this industry and year.</p>', unsafe_allow_html=True)
         for index, row in enumerate(rows):
             dimension = themes[index].get("toe_dimension", "technology") if index < len(themes) else "technology"

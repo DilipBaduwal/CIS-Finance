@@ -130,13 +130,15 @@ def parse_index_lines(lines: Iterable[str]) -> list:
             if 1900 <= start <= 2100 or 1900 <= end <= 2100:
                 continue
             entries.append(IndexEntry(title.strip(" ."), start, end, index_page))
-        elif line.isdigit() and 1 <= int(line) <= 999 and not 1900 <= int(line) <= 2100 and entries is not None:
+        elif line.isascii() and line.isdecimal() and 1 <= int(line) <= 999 and entries is not None:
             # Many annual-report contents pages put the page number before the
             # title on separate lines. Prefer the following title lines.
             page_number = int(line)
             following = []
             cursor = index_page
-            while cursor < len(cleaned_lines) and not cleaned_lines[cursor].isdigit() and len(following) < 2:
+            while cursor < len(cleaned_lines) and not (
+                cleaned_lines[cursor].isascii() and cleaned_lines[cursor].isdecimal()
+            ) and len(following) < 2:
                 following.append(cleaned_lines[cursor].strip(" ."))
                 cursor += 1
             title = " ".join(following).strip()
