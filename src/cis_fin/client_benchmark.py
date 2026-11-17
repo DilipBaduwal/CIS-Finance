@@ -4,12 +4,15 @@ import re
 import uuid
 from pathlib import Path
 
+import streamlit as st
+
 from cis_fin.benchmark import normalize_industry, normalize_fiscal_year
 from cis_fin.company_queries import CompanyLookupError, export_document_chunks, list_recent_documents
 from cis_fin.postgres import secure_postgres_dsn
 from cis_fin.settings import Settings
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def find_benchmark(industry, year):
     normalized_year = normalize_fiscal_year(year)
     candidates = sorted(Path("artifacts").glob("benchmark_*_v*.json"), key=lambda item: int(item.stem.rsplit("_v", 1)[-1]), reverse=True)
@@ -53,6 +56,7 @@ def _healthcare_database_questions(benchmark):
     return benchmark
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def find_matrix(benchmark):
     key = normalize_industry(benchmark.get("industry", "")).lower().replace(" ", "_")
     paths = [Path("artifacts/{}_ai_readiness_regression_matrix.json".format(key))]
@@ -127,6 +131,7 @@ def company_scores(matrix, benchmark):
     return sorted(result, key=lambda x: x["score"], reverse=True)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def evidence(company, question):
     try:
         documents = list_recent_documents(Settings.from_env(), limit=100)
