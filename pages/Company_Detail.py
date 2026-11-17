@@ -29,7 +29,9 @@ if not row:
 
 values = row.get("feature_vector", [])
 available = [value for value in values if isinstance(value, (int, float))]
-overall = round(sum(available) / len(available) * 20, 1) if available else None
+ranked = company_scores(matrix, benchmark)
+company_summary = next((item for item in ranked if item.get("company") == company), None)
+overall = company_summary.get("score") if company_summary else None
 st.markdown('<div class="hero"><div>COMPANY DETAIL</div><h1>{}</h1><p>{} · {} · question-level AI-readiness evidence</p></div>'.format(company, industry, year), unsafe_allow_html=True)
 back, compare = st.columns([1, 1])
 with back:

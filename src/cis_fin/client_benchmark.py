@@ -124,10 +124,17 @@ def cohort_rows(matrix, benchmark):
 
 def company_scores(matrix, benchmark):
     result = []
+    is_healthcare = normalize_industry(benchmark.get("industry", "")) in {"Healthcare", "Pharmaceuticals"}
+    question_count = len(benchmark.get("themes", []))
     for row in cohort_rows(matrix, benchmark):
         values = [x for x in row.get("feature_vector", []) if isinstance(x, (int, float))]
         if values:
-            result.append({"company": row.get("company"), "score": round(sum(values) / len(values) * 20, 1)})
+            denominator = question_count if is_healthcare and question_count else len(values)
+            result.append({
+                "company": row.get("company"),
+                "score": round(sum(values) / denominator * 20, 1),
+                "coverage": "{}/{}".format(len(values), question_count) if is_healthcare else None,
+            })
     return sorted(result, key=lambda x: x["score"], reverse=True)
 
 

@@ -39,7 +39,8 @@ for rank, company_row in enumerate(ranked, 1):
     with col_name:
         st.markdown("**{} · {}**".format(rank, company_name))
     with col_score:
-        st.markdown("**{} / 100**".format(company_row["score"]))
+        coverage = company_row.get("coverage")
+        st.markdown("**{} / 100**{}".format(company_row["score"], "  ·  " + coverage + " questions" if coverage else ""))
     with col_open:
         if st.button("Open", key="company_open_{}".format(company_name)):
             st.session_state["selected_company"] = company_name
