@@ -1,5 +1,5 @@
 import streamlit as st
-from cis_fin.client_benchmark import find_benchmark, find_matrix, cohort_rows
+from cis_fin.client_benchmark import find_benchmark, find_matrix, cohort_rows, ai_justification
 
 st.set_page_config(page_title="Question evidence · CIS-FIN", page_icon="◈", layout="wide")
 st.markdown("""<style>
@@ -58,16 +58,11 @@ company_columns = st.columns(2)
 for position, row in enumerate(visible_rows):
     company = row.get("company", "Unknown")
     value = row.get("features", {}).get("theme_{}".format(index))
-    provenance = row.get("provenance", {}).get("theme_{}".format(index), {})
     score = round(value * 20, 1) if isinstance(value, (int, float)) else None
     with company_columns[position % len(company_columns)]:
-        st.markdown('<div class="card company-card"><small>{}</small><div class="score">{}</div><b>/ 100</b><p class="muted">AI score: {} / 5<br>Confidence: {}</p>'.format(company, score if score is not None else "—", value if value is not None else "—", provenance.get("confidence", "—")), unsafe_allow_html=True)
-        quotes = provenance.get("evidence_previews", [])
-        chunk_ids = provenance.get("supporting_chunk_ids", [])
-        if chunk_ids:
-            st.caption("{} supporting chunks".format(len(chunk_ids)))
-        if quotes:
-            for quote in quotes[:2]:
-                st.markdown('<div class="evidence">{}</div>'.format(quote.replace("<", "&lt;").replace(">", "&gt;")), unsafe_allow_html=True)
+        saved = ai_justification(company, selected_question) if value is not None else {"rationale": "No saved score or evidence for this question.", "confidence": None}
+        st.markdown('<div class="card company-card"><small>{}</small><div class="score">{}</div><b>/ 100</b><p class="muted">AI score: {} / 5<br>Saved confidence: {}</p></div>'.format(company, score if score is not None else "—", value if value is not None else "—", saved.get("confidence") if saved.get("confidence") is not None else "—"), unsafe_allow_html=True)
+        if value is not None:
+            st.markdown('<div class="evidence"><b>Evidence supporting this score</b><br>{}</div>'.format(saved.get("rationale", "No saved evidence available.").replace("<", "&lt;").replace(">", "&gt;")), unsafe_allow_html=True)
         else:
-            st.info("No AI evidence preview saved.")
+            st.info("No saved score or supporting evidence for this question.")
