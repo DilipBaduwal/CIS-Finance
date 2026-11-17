@@ -60,7 +60,7 @@ for position, row in enumerate(visible_rows):
     value = row.get("features", {}).get("theme_{}".format(index))
     score = round(value * 20, 1) if isinstance(value, (int, float)) else None
     with company_columns[position % len(company_columns)]:
-        saved = ai_justification(company, selected_question) if value is not None else {"rationale": "No saved score or evidence for this question.", "confidence": None}
+        saved = ai_justification(company, theme.get("question", "")) if value is not None else {"rationale": "No saved score or evidence for this question.", "confidence": None}
         st.markdown('<div class="card company-card"><small>{}</small><div class="score">{}</div><b>/ 100</b><p class="muted">AI score: {} / 5<br>Saved confidence: {}</p></div>'.format(company, score if score is not None else "—", value if value is not None else "—", saved.get("confidence") if saved.get("confidence") is not None else "—"), unsafe_allow_html=True)
         if value is not None:
             st.markdown('<div class="evidence"><b>Evidence supporting this score</b><br>{}</div>'.format(saved.get("rationale", "No saved evidence available.").replace("<", "&lt;").replace(">", "&gt;")), unsafe_allow_html=True)
