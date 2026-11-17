@@ -52,8 +52,12 @@ with c:
     st.markdown('<div class="card"><small>INDUSTRY</small><h2>{}</h2><span>{}</span></div>'.format(industry, year), unsafe_allow_html=True)
 
 st.markdown("### TOE question scores")
-st.caption("Only questions with saved evidence for this company are scored; unavailable questions are shown for transparency.")
+st.caption("Questions are ordered by AI score from highest to lowest. Unavailable questions are shown last.")
+question_items = []
 for index, theme in enumerate(benchmark.get("themes", [])):
     value = values[index] if index < len(values) and isinstance(values[index], (int, float)) else None
+    question_items.append((index, theme, value))
+question_items.sort(key=lambda item: (item[2] is not None, item[2] if item[2] is not None else -1), reverse=True)
+for index, theme, value in question_items:
     score = round(value * 20, 1) if value is not None else None
     st.markdown('<div class="card"><small>{} · Question {}</small><h3>{}</h3><strong>{}</strong> / 100 <span class="muted"> · AI score: {} / 5</span></div>'.format(theme.get("toe_dimension", "TOE").title(), index + 1, theme.get("question", ""), score if score is not None else "Not available", value if value is not None else "—"), unsafe_allow_html=True)
