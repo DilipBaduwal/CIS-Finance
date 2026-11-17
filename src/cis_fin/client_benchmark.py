@@ -6,6 +6,7 @@ from pathlib import Path
 
 from cis_fin.benchmark import normalize_industry, normalize_fiscal_year
 from cis_fin.company_queries import CompanyLookupError, export_document_chunks, list_recent_documents
+from cis_fin.postgres import secure_postgres_dsn
 from cis_fin.settings import Settings
 
 
@@ -19,15 +20,96 @@ def find_benchmark(industry, year):
     key = normalize_industry(industry).lower().replace(" ", "_")
     for path in (Path("artifacts/{}_ai_readiness_benchmark_{}.json".format(key, normalized_year)), Path("artifacts/it_ai_readiness_benchmark_{}.json".format(normalized_year))):
         if path.exists() and (normalize_industry(industry) == "Information Technology" or key in path.name):
-            return json.loads(path.read_text(encoding="utf-8"))
+            item = json.loads(path.read_text(encoding="utf-8"))
+            if normalize_industry(industry) in {"Healthcare", "Pharmaceuticals"}:
+                item = _healthcare_database_questions(item)
+            return item
     return None
+
+
+def _healthcare_database_questions(benchmark):
+    """Use the persisted healthcare question set that produced the scores."""
+    try:
+        import psycopg
+
+        settings = Settings.from_env()
+        with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=10) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """SELECT theme_index, question_text, toe_dimension, chunk_ids
+                       FROM healthcare_benchmark_questions
+                       WHERE question_status IN ('active', 'generated')
+                       ORDER BY theme_index"""
+                )
+                rows = cursor.fetchall()
+        if rows:
+            benchmark["themes"] = [
+                {"question": question, "toe_dimension": dimension, "chunk_ids": chunk_ids}
+                for _, question, dimension, chunk_ids in rows
+            ]
+            benchmark["question_count"] = len(rows)
+    except Exception:
+        pass
+    return benchmark
 
 
 def find_matrix(benchmark):
     key = normalize_industry(benchmark.get("industry", "")).lower().replace(" ", "_")
-    for path in (Path("artifacts/{}_ai_readiness_regression_matrix.json".format(key)), Path("artifacts/it_ai_readiness_regression_matrix.json")):
+    paths = [Path("artifacts/{}_ai_readiness_regression_matrix.json".format(key))]
+    if normalize_industry(benchmark.get("industry", "")) == "Information Technology":
+        paths.append(Path("artifacts/it_ai_readiness_regression_matrix.json"))
+    for path in paths:
         if path.exists():
             return json.loads(path.read_text(encoding="utf-8"))
+    # Healthcare scores are stored per question/chunk in PostgreSQL rather
+    # than in the IT regression-matrix artifact. Build the same matrix shape
+    # from those saved scores so all comparison pages use one interface.
+    if normalize_industry(benchmark.get("industry", "")) in {"Healthcare", "Pharmaceuticals"}:
+        try:
+            import psycopg
+
+            settings = Settings.from_env()
+            source = "healthcare_ai_readiness_benchmark_2025-2026_all_chunks"
+            question_indexes = {
+                theme.get("question", ""): index
+                for index, theme in enumerate(benchmark.get("themes", []))
+            }
+            rows_by_company = {}
+            with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=10) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT c.symbol, b.question_text, b.score
+                        FROM benchmark_chunk_scores b
+                        JOIN chunks ch ON ch.chunk_id = b.chunk_id
+                        JOIN companies c ON c.company_id = ch.company_id
+                        JOIN documents d ON d.document_id = ch.document_id
+                        WHERE b.source_benchmark = %s
+                          AND lower(c.industry) IN ('healthcare', 'pharmaceuticals')
+                        """,
+                        (source,),
+                    )
+                    for company, question, score in cursor.fetchall():
+                        index = question_indexes.get(question)
+                        if index is None or score is None:
+                            continue
+                        company = str(company).upper()
+                        rows_by_company.setdefault(company, {}).setdefault(index, []).append(float(score))
+            rows = []
+            for company, scores in rows_by_company.items():
+                feature_vector = []
+                features = {}
+                for index in range(len(benchmark.get("themes", []))):
+                    values = scores.get(index, [])
+                    value = round(sum(values) / len(values), 3) if values else None
+                    feature_vector.append(value)
+                    if value is not None:
+                        features["theme_{}".format(index)] = value
+                if any(value is not None for value in feature_vector):
+                    rows.append({"company": company, "feature_vector": feature_vector, "features": features})
+            return {"rows": rows, "feature_names": [theme.get("question", "") for theme in benchmark.get("themes", [])]}
+        except (Exception,):
+            return {"rows": [], "feature_names": []}
     return {"rows": [], "feature_names": []}
 
 
