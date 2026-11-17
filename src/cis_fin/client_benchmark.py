@@ -2,6 +2,7 @@
 import json
 import re
 import uuid
+from urllib.request import Request, urlopen
 from pathlib import Path
 
 import streamlit as st
@@ -154,7 +155,7 @@ def evidence(company, question):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def ai_justification(company, question):
-    """Return saved AI rationale without exposing raw chunk records."""
+    """Generate a fresh rationale from the strongest saved evidence quotes."""
     try:
         import psycopg
 
@@ -162,20 +163,32 @@ def ai_justification(company, question):
         with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=10) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    """SELECT b.rationale, b.confidence, b.evidence_quote
+                    """SELECT b.score, b.confidence, b.evidence_quote
                        FROM benchmark_chunk_scores b
                        JOIN chunks ch ON ch.chunk_id=b.chunk_id
                        JOIN companies c ON c.company_id=ch.company_id
                        WHERE b.source_benchmark=%s
                          AND upper(c.symbol)=upper(%s)
                          AND b.question_text=%s
-                       ORDER BY b.confidence DESC NULLS LAST
+                       ORDER BY b.score DESC, b.confidence DESC NULLS LAST
                        LIMIT 3""",
                     ("healthcare_ai_readiness_benchmark_2025-2026_all_chunks", company, question),
                 )
                 rows = cursor.fetchall()
-        rationales = [str(row[0]).strip() for row in rows if row[0] and str(row[0]).strip()]
+        quotes = [str(row[2]).strip() for row in rows if row[2] and str(row[2]).strip()]
         confidence = next((row[1] for row in rows if row[1] is not None), None)
-        return {"rationale": rationales[0] if rationales else "No saved AI justification is available.", "confidence": confidence}
+        if not quotes:
+            return {"rationale": "No saved evidence is available for this company and question.", "confidence": confidence}
+        prompt = (
+            "Answer the question using only the evidence quotes below. Write one concise, factual justification. "
+            "Do not invent facts, do not mention chunks, and do not claim AI capability unless the evidence says so.\n\n"
+            "Question: {}\nEvidence quotes:\n{}"
+        ).format(question, "\n---\n".join(quotes))
+        body = {"model": settings.ollama_model, "stream": False, "think": False, "options": {"temperature": 0.1, "num_predict": 120}, "messages": [{"role": "user", "content": prompt}]}
+        request = Request(settings.ollama_base_url.rstrip("/") + "/api/chat", data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
+        with urlopen(request, timeout=90) as response:
+            result = json.loads(response.read())
+        rationale = result.get("message", {}).get("content", "").strip()
+        return {"rationale": rationale or "Evidence was found, but a justification could not be generated.", "confidence": confidence}
     except Exception:
         return {"rationale": "AI justification could not be loaded.", "confidence": None}
