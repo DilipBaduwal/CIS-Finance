@@ -150,3 +150,32 @@ def evidence(company, question):
         return sorted(records, key=lambda row: len(terms & set(re.findall(r"[a-zA-Z][a-zA-Z0-9-]{3,}", row.get("chunk_text", "").lower()))), reverse=True)[:2]
     except (CompanyLookupError, ValueError, RuntimeError):
         return []
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def ai_justification(company, question):
+    """Return saved AI rationale without exposing raw chunk records."""
+    try:
+        import psycopg
+
+        settings = Settings.from_env()
+        with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=10) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """SELECT b.rationale, b.confidence, b.evidence_quote
+                       FROM benchmark_chunk_scores b
+                       JOIN chunks ch ON ch.chunk_id=b.chunk_id
+                       JOIN companies c ON c.company_id=ch.company_id
+                       WHERE b.source_benchmark=%s
+                         AND upper(c.symbol)=upper(%s)
+                         AND b.question_text=%s
+                       ORDER BY b.confidence DESC NULLS LAST
+                       LIMIT 3""",
+                    ("healthcare_ai_readiness_benchmark_2025-2026_all_chunks", company, question),
+                )
+                rows = cursor.fetchall()
+        rationales = [str(row[0]).strip() for row in rows if row[0] and str(row[0]).strip()]
+        confidence = next((row[1] for row in rows if row[1] is not None), None)
+        return {"rationale": rationales[0] if rationales else "No saved AI justification is available.", "confidence": confidence}
+    except Exception:
+        return {"rationale": "AI justification could not be loaded.", "confidence": None}

@@ -1,6 +1,6 @@
 import streamlit as st
 
-from cis_fin.client_benchmark import find_benchmark, find_matrix, cohort_rows, company_scores
+from cis_fin.client_benchmark import find_benchmark, find_matrix, cohort_rows, company_scores, ai_justification
 
 st.set_page_config(page_title="Company detail · CIS-FIN", page_icon="◈", layout="wide")
 st.markdown("""<style>
@@ -8,6 +8,7 @@ st.markdown("""<style>
 .hero{background:linear-gradient(135deg,#14264d,#2457d6);padding:2.3rem;border-radius:22px;color:#fff}
 .hero h1{color:#fff;font-size:2.7rem;margin:.3rem 0}.hero p{color:#dce7ff}
 .card{background:#fff;border:1px solid #e1e7f1;border-radius:18px;padding:1.25rem 1.4rem;box-shadow:0 8px 24px #243b6b0d;margin:.7rem 0}
+.justification{background:#f3f7ff;border-left:4px solid #2457d6;border-radius:10px;padding:.9rem 1rem;color:#334b73;line-height:1.55}
 .score{font-size:3.5rem;font-weight:750;color:#173ea7;line-height:1}.muted{color:#62708a}
 .stButton>button{background:#2457d6!important;color:#fff!important;border:0!important;border-radius:10px!important;font-weight:700!important}
 .stButton>button p,.stButton>button span{color:#fff!important}
@@ -61,3 +62,9 @@ question_items.sort(key=lambda item: (item[2] is not None, item[2] if item[2] is
 for index, theme, value in question_items:
     score = round(value * 20, 1) if value is not None else None
     st.markdown('<div class="card"><small>{} · Question {}</small><h3>{}</h3><strong>{}</strong> / 100 <span class="muted"> · AI score: {} / 5</span></div>'.format(theme.get("toe_dimension", "TOE").title(), index + 1, theme.get("question", ""), score if score is not None else "Not available", value if value is not None else "—"), unsafe_allow_html=True)
+    if value is not None:
+        with st.expander("View AI justification"):
+            justification = ai_justification(company, theme.get("question", ""))
+            confidence = justification.get("confidence")
+            st.markdown('<div class="justification">{}</div>'.format(justification.get("rationale", "").replace("<", "&lt;").replace(">", "&gt;")), unsafe_allow_html=True)
+            st.caption("AI confidence: {}".format(confidence if confidence is not None else "Not recorded"))
