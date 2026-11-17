@@ -30,14 +30,25 @@ with right:
     st.markdown('<div class="card"><small>WHAT THIS SHOWS</small><h3>AI evidence used for this TOE question</h3><p class="muted">The evidence below comes from the chunks selected and scored by the AI for each company. It is not the full annual report.</p></div>', unsafe_allow_html=True)
 st.markdown("### Company scores and AI evidence")
 company_search = st.text_input("Search company", placeholder="Type a company name…", key="question_company_search")
-company_names = [str(row.get("company", "Unknown")) for row in rows if not company_search.strip() or company_search.strip().casefold() in str(row.get("company", "")).casefold()]
+filtered_rows = [row for row in rows if not company_search.strip() or company_search.strip().casefold() in str(row.get("company", "")).casefold()]
+filtered_rows.sort(
+    key=lambda row: (
+        isinstance(row.get("feature_vector", [])[index] if index < len(row.get("feature_vector", [])) else None, (int, float)),
+        row.get("feature_vector", [])[index] if index < len(row.get("feature_vector", [])) and isinstance(row.get("feature_vector", [])[index], (int, float)) else -1,
+    ),
+    reverse=True,
+)
+company_names = [str(row.get("company", "Unknown")) for row in filtered_rows]
 if company_search.strip() and not company_names:
     st.info("No company matched '{}'. Try another company name.".format(company_search.strip()))
 selector_a, selector_b = st.columns(2)
 with selector_a:
-    company_a = st.selectbox("Company A", company_names, key="question_detail_company_a") if company_names else None
+    company_a = st.selectbox("Company A", company_names, key="question_detail_company_a_{}".format(index)) if company_names else None
 with selector_b:
-    company_b = st.selectbox("Company B", company_names, index=min(1, len(company_names) - 1), key="question_detail_company_b") if company_names else None
+    b_key = "question_detail_company_b_{}".format(index)
+    if company_a and st.session_state.get(b_key) == company_a:
+        st.session_state.pop(b_key, None)
+    company_b = st.selectbox("Company B", company_names, index=min(1, len(company_names) - 1), key=b_key) if company_names else None
 selected_names = [name for name in (company_a, company_b) if name]
 # Preserve the selector order. ``rows`` is database/ranking order, which
 # previously made Company A and Company B cards appear swapped.
