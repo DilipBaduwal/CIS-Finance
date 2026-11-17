@@ -11,6 +11,8 @@ from cis_fin.company_queries import CompanyLookupError, export_document_chunks, 
 from cis_fin.postgres import secure_postgres_dsn
 from cis_fin.settings import Settings
 
+BENCHMARK_SOURCE = "healthcare_ai_readiness_benchmark_2025-2026_all_chunks"
+
 
 @st.cache_data(ttl=300, show_spinner=False)
 def find_benchmark(industry, year):
@@ -27,7 +29,49 @@ def find_benchmark(industry, year):
             if normalize_industry(industry) in {"Healthcare", "Pharmaceuticals"}:
                 item = _healthcare_database_questions(item)
             return item
+    if normalize_industry(industry) in {"Healthcare", "Pharmaceuticals"}:
+        return _healthcare_database_benchmark(year)
     return None
+
+
+def _healthcare_database_benchmark(year):
+    """Build the healthcare benchmark from PostgreSQL when artifacts are absent."""
+    try:
+        import psycopg
+
+        settings = Settings.from_env()
+        with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=10) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """SELECT theme_index, question_text, toe_dimension, chunk_ids
+                       FROM healthcare_benchmark_questions
+                       WHERE benchmark_source=%s AND question_status IN ('active','generated')
+                       ORDER BY theme_index""",
+                    (BENCHMARK_SOURCE,),
+                )
+                question_rows = cursor.fetchall()
+                cursor.execute(
+                    """SELECT DISTINCT c.symbol
+                       FROM benchmark_chunk_scores b
+                       JOIN chunks ch ON ch.chunk_id=b.chunk_id
+                       JOIN companies c ON c.company_id=ch.company_id
+                       WHERE b.source_benchmark=%s ORDER BY c.symbol""",
+                    (BENCHMARK_SOURCE,),
+                )
+                companies = [row[0] for row in cursor.fetchall()]
+        if not question_rows:
+            return None
+        return {
+            "industry": "Healthcare",
+            "fiscal_year": year,
+            "companies": companies,
+            "themes": [
+                {"question": question, "toe_dimension": dimension, "chunk_ids": chunk_ids}
+                for _, question, dimension, chunk_ids in question_rows
+            ],
+        }
+    except Exception:
+        return None
 
 
 def _healthcare_database_questions(benchmark):
