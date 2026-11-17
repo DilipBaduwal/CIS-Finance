@@ -20,8 +20,10 @@ if not options:
     st.warning("Company scores are not available yet.")
     st.stop()
 a, b = st.columns(2)
+prefill = st.session_state.pop("peer_prefill_company", None)
+prefill_index = options.index(prefill) if prefill in options else 0
 with a:
-    company_a = st.selectbox("Company A", options, key="peer_a")
+    company_a = st.selectbox("Company A", options, index=prefill_index, key="peer_a")
 with b:
     company_b = st.selectbox("Company B", options, index=min(1, len(options) - 1), key="peer_b")
 def row_for(name):

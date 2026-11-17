@@ -32,7 +32,23 @@ for dimension in ("technology", "organization", "environment"):
     score = round(sum(vals) / len(vals) * 20) if vals else 0
     st.markdown('<div class="card" style="margin:.6rem 0"><b>{}</b><div class="bar"><div class="fill" style="width:{}%"></div></div><strong>{} / 100</strong></div>'.format(dimension.title(), score, score), unsafe_allow_html=True)
 st.markdown("### Company ranking")
-st.dataframe(ranked, use_container_width=True, hide_index=True)
+st.caption("Open a company to review every available TOE question score.")
+for rank, company_row in enumerate(ranked, 1):
+    company_name = company_row["company"]
+    col_name, col_score, col_open, col_compare = st.columns([5, 2, 1, 1])
+    with col_name:
+        st.markdown("**{} · {}**".format(rank, company_name))
+    with col_score:
+        st.markdown("**{} / 100**".format(company_row["score"]))
+    with col_open:
+        if st.button("Open", key="company_open_{}".format(company_name)):
+            st.session_state["selected_company"] = company_name
+            st.switch_page("pages/Company_Detail.py")
+    with col_compare:
+        if st.button("Compare", key="company_compare_{}".format(company_name)):
+            st.session_state["peer_prefill_company"] = company_name
+            st.session_state.pop("peer_a", None)
+            st.switch_page("pages/Peer_Comparison.py")
 st.markdown("### TOE questions")
 st.caption("Industry-average score for every benchmark question. Scores are shown on a 0–100 scale.")
 question_rows = []
