@@ -39,7 +39,10 @@ with selector_a:
 with selector_b:
     company_b = st.selectbox("Company B", company_names, index=min(1, len(company_names) - 1), key="question_detail_company_b") if company_names else None
 selected_names = [name for name in (company_a, company_b) if name]
-visible_rows = [row for row in rows if row.get("company") in selected_names]
+# Preserve the selector order. ``rows`` is database/ranking order, which
+# previously made Company A and Company B cards appear swapped.
+rows_by_company = {str(row.get("company")): row for row in rows}
+visible_rows = [rows_by_company[name] for name in selected_names if name in rows_by_company]
 company_columns = st.columns(2)
 for position, row in enumerate(visible_rows):
     company = row.get("company", "Unknown")
