@@ -1,5 +1,5 @@
 import streamlit as st
-from cis_fin.client_benchmark import find_benchmark, find_matrix, cohort_rows, company_scores, evidence
+from cis_fin.client_benchmark import find_benchmark, find_matrix, cohort_rows, company_scores, evidence, ai_justification
 
 st.set_page_config(page_title="Peer comparison · CIS-FIN", page_icon="◈", layout="wide")
 st.markdown("<style>.stApp{background:#f5f7fb}.block-container{max-width:1380px;padding:2rem 2.5rem 5rem}.hero{background:linear-gradient(135deg,#14264d,#2457d6);padding:2.3rem;border-radius:22px;color:#fff}.hero h1{color:#fff;font-size:3rem;margin:.2rem 0}.hero p{color:#dce7ff}.card{background:#fff;border:1px solid #e1e7f1;border-radius:18px;padding:1.4rem;box-shadow:0 8px 24px #243b6b0d}.insight{background:#edf3ff;border-left:4px solid #2457d6;border-radius:12px;padding:1rem;color:#31518b}</style>", unsafe_allow_html=True)
@@ -47,6 +47,16 @@ for item in question_rows:
     delta = item.get("Difference")
     direction = "Higher" if isinstance(delta, (int, float)) and delta > 0 else "Lower" if isinstance(delta, (int, float)) and delta < 0 else "Equal" if isinstance(delta, (int, float)) else "Unavailable"
     st.markdown('<div class="card"><small>{}</small><h3>{}</h3><div style="display:flex;gap:2rem"><div><b>{}</b><br><span style="font-size:1.8rem;color:#2457d6">{}</span> / 100</div><div><b>{}</b><br><span style="font-size:1.8rem;color:#2457d6">{}</span> / 100</div><div><b>{}</b><br>{} points</div></div></div>'.format(item["TOE"], item["Question"], company_a, item[company_a] if item[company_a] is not None else "—", company_b, item[company_b] if item[company_b] is not None else "—", direction, abs(delta) if isinstance(delta, (int, float)) else "—"), unsafe_allow_html=True)
+    evidence_a, evidence_b = st.columns(2)
+    for column, company, score in ((evidence_a, company_a, item[company_a]), (evidence_b, company_b, item[company_b])):
+        with column:
+            with st.expander("{} evidence supporting score".format(company)):
+                if score is None:
+                    st.info("No saved score or supporting evidence for this question.")
+                else:
+                    saved = ai_justification(company, item["Question"])
+                    st.markdown('<div class="insight">{}</div>'.format(saved.get("rationale", "No saved evidence available.").replace("<", "&lt;").replace(">", "&gt;")), unsafe_allow_html=True)
+                    st.caption("Saved scoring confidence: {}".format(saved.get("confidence") if saved.get("confidence") is not None else "Not recorded"))
 selected = st.selectbox("Deep analysis", [x["Question"] for x in question_rows])
 st.markdown('<div class="card"><h2>{}</h2><p>Compare the evidence behind this question for both companies.</p></div>'.format(selected), unsafe_allow_html=True)
 for company in (company_a, company_b):
