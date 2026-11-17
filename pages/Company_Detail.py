@@ -63,8 +63,8 @@ for index, theme, value in question_items:
     score = round(value * 20, 1) if value is not None else None
     st.markdown('<div class="card"><small>{} · Question {}</small><h3>{}</h3><strong>{}</strong> / 100 <span class="muted"> · AI score: {} / 5</span></div>'.format(theme.get("toe_dimension", "TOE").title(), index + 1, theme.get("question", ""), score if score is not None else "Not available", value if value is not None else "—"), unsafe_allow_html=True)
     if value is not None:
-        with st.expander("View AI justification"):
+        with st.expander("View saved evidence supporting this score"):
             justification = ai_justification(company, theme.get("question", ""))
             confidence = justification.get("confidence")
             st.markdown('<div class="justification">{}</div>'.format(justification.get("rationale", "").replace("<", "&lt;").replace(">", "&gt;")), unsafe_allow_html=True)
-            st.caption("AI confidence: {}".format(confidence if confidence is not None else "Not recorded"))
+            st.caption("Saved scoring confidence: {}".format(confidence if confidence is not None else "Not recorded"))

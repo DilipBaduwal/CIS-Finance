@@ -2,7 +2,6 @@
 import json
 import re
 import uuid
-from urllib.request import Request, urlopen
 from pathlib import Path
 
 import streamlit as st
@@ -155,7 +154,7 @@ def evidence(company, question):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def ai_justification(company, question):
-    """Generate a fresh rationale from the strongest saved evidence quotes."""
+    """Return saved evidence only; the client must never call an AI model."""
     try:
         import psycopg
 
@@ -179,16 +178,6 @@ def ai_justification(company, question):
         confidence = next((row[1] for row in rows if row[1] is not None), None)
         if not quotes:
             return {"rationale": "No saved evidence is available for this company and question.", "confidence": confidence}
-        prompt = (
-            "Answer the question using only the evidence quotes below. Write one concise, factual justification. "
-            "Do not invent facts, do not mention chunks, and do not claim AI capability unless the evidence says so.\n\n"
-            "Question: {}\nEvidence quotes:\n{}"
-        ).format(question, "\n---\n".join(quotes))
-        body = {"model": settings.ollama_model, "stream": False, "think": False, "options": {"temperature": 0.1, "num_predict": 120}, "messages": [{"role": "user", "content": prompt}]}
-        request = Request(settings.ollama_base_url.rstrip("/") + "/api/chat", data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
-        with urlopen(request, timeout=90) as response:
-            result = json.loads(response.read())
-        rationale = result.get("message", {}).get("content", "").strip()
-        return {"rationale": rationale or "Evidence was found, but a justification could not be generated.", "confidence": confidence}
+        return {"rationale": " ".join(quotes), "confidence": confidence}
     except Exception:
         return {"rationale": "AI justification could not be loaded.", "confidence": None}
