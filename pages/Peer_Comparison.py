@@ -33,14 +33,17 @@ higher = company_a if score_a >= score_b else company_b
 st.markdown('<div class="insight"><b>{}</b> is higher by <b>{} points</b> overall ({}/100 vs {}/100).</div>'.format(higher, abs(score_a - score_b), company_a, score_a, company_b, score_b), unsafe_allow_html=True)
 question_rows = []
 for i, theme in enumerate(benchmark.get("themes", [])):
-    va = ra.get("features", {}).get("theme_{}".format(i))
-    vb = rb.get("features", {}).get("theme_{}".format(i))
+    # Use the ordered feature vector as the source of truth. Healthcare
+    # scores are assembled from PostgreSQL and may not expose the optional
+    # ``features`` mapping on every row.
+    va = ra.get("feature_vector", [])[i] if i < len(ra.get("feature_vector", [])) else None
+    vb = rb.get("feature_vector", [])[i] if i < len(rb.get("feature_vector", [])) else None
     question_rows.append({"TOE": theme.get("toe_dimension", "").title(), "Question": theme.get("question", ""), company_a: round(va * 20, 1) if va is not None else None, company_b: round(vb * 20, 1) if vb is not None else None, "Difference": round((va - vb) * 20, 1) if va is not None and vb is not None else None})
 st.markdown("### Side-by-side question comparison")
 st.caption("Compare both selected companies question by question.")
 for item in question_rows:
     delta = item.get("Difference")
-    direction = "Higher" if isinstance(delta, (int, float)) and delta > 0 else "Lower" if isinstance(delta, (int, float)) and delta < 0 else "Equal"
+    direction = "Higher" if isinstance(delta, (int, float)) and delta > 0 else "Lower" if isinstance(delta, (int, float)) and delta < 0 else "Equal" if isinstance(delta, (int, float)) else "Unavailable"
     st.markdown('<div class="card"><small>{}</small><h3>{}</h3><div style="display:flex;gap:2rem"><div><b>{}</b><br><span style="font-size:1.8rem;color:#2457d6">{}</span> / 100</div><div><b>{}</b><br><span style="font-size:1.8rem;color:#2457d6">{}</span> / 100</div><div><b>{}</b><br>{} points</div></div></div>'.format(item["TOE"], item["Question"], company_a, item[company_a] if item[company_a] is not None else "—", company_b, item[company_b] if item[company_b] is not None else "—", direction, abs(delta) if isinstance(delta, (int, float)) else "—"), unsafe_allow_html=True)
 selected = st.selectbox("Deep analysis", [x["Question"] for x in question_rows])
 st.markdown('<div class="card"><h2>{}</h2><p>Compare the evidence behind this question for both companies.</p></div>'.format(selected), unsafe_allow_html=True)
