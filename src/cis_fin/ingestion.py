@@ -438,9 +438,9 @@ class PostgresIngestionStore:
                             """
                             INSERT INTO chunks (
                                 chunk_id, document_id, company_id, page_start, page_end,
-                                chunk_index, chunk_number, chunk_text, chunk_hash, extraction_version, researcher_id
+                                chunk_index, chunk_text, chunk_hash, extraction_version, researcher_id
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             ON CONFLICT (document_id, chunk_index) DO NOTHING
                             RETURNING chunk_id, chunk_hash, page_start, page_end
                             """,
@@ -451,7 +451,6 @@ class PostgresIngestionStore:
                                 chunk.page_start,
                                 chunk.page_end,
                                 chunk.chunk_index,
-                                chunk.chunk_index + 1,
                                 chunk.text,
                                 chunk.chunk_hash,
                                 "local-preview-v1",
