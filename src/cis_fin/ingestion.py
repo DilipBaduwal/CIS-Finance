@@ -477,6 +477,12 @@ class PostgresIngestionStore:
                                 "A saved chunk differs from the deterministic retry result at index {}; "
                                 "preserve existing research and investigate parser/version drift.".format(chunk.chunk_index)
                             )
+                        cursor.execute(
+                            """INSERT INTO chunk_ai_scores (chunk_id, document_id)
+                               VALUES (%s, %s)
+                               ON CONFLICT (chunk_id) DO NOTHING""",
+                            (existing[0], document_id),
+                        )
                     cursor.execute(
                         """
                         UPDATE processing_jobs
