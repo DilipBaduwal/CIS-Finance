@@ -67,6 +67,7 @@ CORE_SCHEMA_COLUMNS = {
         "page_start",
         "page_end",
         "chunk_index",
+        "chunk_number",
         "chunk_text",
         "chunk_hash",
         "extraction_version",
