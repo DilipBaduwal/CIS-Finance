@@ -3,6 +3,8 @@
 import json
 import os
 import socket
+import subprocess
+import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -780,6 +782,17 @@ def run_extraction_job(
             request.engine,
             extractor_version(request.engine),
         )
+        # Score this upload inline after chunk persistence. Existing benchmark
+        # scores are not touched; only this document's new queue records run.
+        scorer = Path(__file__).resolve().parents[2] / "scripts" / "score_uploaded_chunks.py"
+        result = subprocess.run(
+            [sys.executable, str(scorer), "--document-id", str(registration.document_id), "--limit", "100000"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise IngestionError("Chunk scoring failed after upload persistence; retry the document scoring job.")
         return registration
     except Exception as exc:
         code, message = _safe_failure_message(exc)

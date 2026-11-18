@@ -29,12 +29,20 @@ def main():
     parser.add_argument('--limit', type=int, default=10)
     parser.add_argument('--watch', action='store_true', help='Keep polling for newly uploaded chunks')
     parser.add_argument('--poll-seconds', type=int, default=10)
+    parser.add_argument('--document-id', help='Score only chunks from one uploaded document')
     args = parser.parse_args()
     settings = Settings.from_env()
     while True:
         with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=10) as conn:
             with conn.cursor() as cur:
-                cur.execute("""SELECT s.chunk_id,ch.chunk_text FROM chunk_ai_scores s JOIN chunks ch ON ch.chunk_id=s.chunk_id WHERE s.status='pending' ORDER BY s.created_at LIMIT %s FOR UPDATE SKIP LOCKED""", (args.limit,))
+                query = """SELECT s.chunk_id,ch.chunk_text FROM chunk_ai_scores s JOIN chunks ch ON ch.chunk_id=s.chunk_id WHERE s.status='pending'"""
+                params = []
+                if args.document_id:
+                    query += " AND s.document_id=%s"
+                    params.append(args.document_id)
+                query += " ORDER BY s.created_at LIMIT %s FOR UPDATE SKIP LOCKED"
+                params.append(args.limit)
+                cur.execute(query, params)
                 rows = cur.fetchall()
                 for chunk_id, text in rows:
                     cur.execute("UPDATE chunk_ai_scores SET status='processing', attempts=attempts+1, updated_at=now() WHERE chunk_id=%s", (chunk_id,))
