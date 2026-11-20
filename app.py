@@ -14,6 +14,37 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 import streamlit as st
 
+
+def export_postgres_json(current_settings):
+    """Create a read-only JSON export of the public PostgreSQL schema."""
+    import psycopg
+    from cis_fin.postgres import secure_postgres_dsn
+
+    if not current_settings.database_url:
+        raise ValueError("DATABASE_URL is not configured.")
+    with psycopg.connect(secure_postgres_dsn(current_settings.database_url), connect_timeout=20) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """SELECT table_name
+                   FROM information_schema.tables
+                   WHERE table_schema='public' AND table_type='BASE TABLE'
+                   ORDER BY table_name"""
+            )
+            table_names = [row[0] for row in cursor.fetchall()]
+            tables = {}
+            for table_name in table_names:
+                cursor.execute('SELECT * FROM "{}"'.format(table_name.replace('"', '""')))
+                columns = [description.name for description in cursor.description]
+                tables[table_name] = {
+                    "columns": columns,
+                    "rows": [dict(zip(columns, row)) for row in cursor.fetchall()],
+                }
+    return {
+        "format": "cis-fin-postgresql-json-v1",
+        "exported_at_utc": datetime.now(timezone.utc).isoformat(),
+        "tables": tables,
+    }
+
 from cis_fin.company_queries import (
     CompanyLookupError,
     export_document_chunks,
@@ -256,6 +287,28 @@ with st.sidebar:
     st.caption("Processing capacity")
     st.metric("Concurrent jobs", Settings.from_env().max_concurrent_ingestions)
     st.caption("Jobs are checkpointed and can be resumed safely.")
+    st.divider()
+    st.caption("Read-only PostgreSQL export")
+    if st.button("Prepare database download", use_container_width=True):
+        try:
+            with st.spinner("Reading PostgreSQL tables…"):
+                database_export = export_postgres_json(Settings.from_env())
+            st.session_state["database_export_json"] = json.dumps(
+                database_export, ensure_ascii=False, indent=2, default=str
+            )
+            st.session_state["database_export_ready_at"] = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            st.success("Database export prepared.")
+        except Exception as exc:
+            st.error("Could not prepare database export: {}".format(type(exc).__name__))
+    if st.session_state.get("database_export_json"):
+        st.download_button(
+            "Download PostgreSQL JSON backup",
+            data=st.session_state["database_export_json"],
+            file_name="cis-fin-postgresql-{}.json".format(st.session_state.get("database_export_ready_at", "export")),
+            mime="application/json",
+            use_container_width=True,
+            key="download_postgresql_json_backup",
+        )
 
 st.markdown(
     '<div class="hero"><h1>CIS-FIN Research Pipeline</h1>'
@@ -300,6 +353,28 @@ with st.expander("Run connectivity checks", expanded=False):
             if st.button(label, use_container_width=True):
                 result = check(settings)
                 (st.success if result.ok else st.error)(result.message)
+
+with st.expander("Download PostgreSQL database", expanded=True):
+    st.caption("Creates a read-only JSON export of all public PostgreSQL tables and rows.")
+    if st.button("Prepare database download", key="prepare_database_download_main"):
+        try:
+            with st.spinner("Reading PostgreSQL tables…"):
+                database_export = export_postgres_json(settings)
+            st.session_state["database_export_json"] = json.dumps(
+                database_export, ensure_ascii=False, indent=2, default=str
+            )
+            st.session_state["database_export_ready_at"] = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            st.success("Database export prepared.")
+        except Exception as exc:
+            st.error("Could not prepare database export: {}".format(type(exc).__name__))
+    if st.session_state.get("database_export_json"):
+        st.download_button(
+            "Download PostgreSQL JSON backup",
+            data=st.session_state["database_export_json"],
+            file_name="cis-fin-postgresql-{}.json".format(st.session_state.get("database_export_ready_at", "export")),
+            mime="application/json",
+            key="download_postgresql_json_backup_main",
+        )
 st.markdown('<div class="section-label">Step 1 · Source document</div>', unsafe_allow_html=True)
 st.subheader("Start a new research document")
 st.caption("Each test performs only a read operation. No upload, collection creation, ingestion, or deletion is performed.")

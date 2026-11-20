@@ -9,6 +9,7 @@ import sys
 import tempfile
 import re
 import uuid
+from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
@@ -133,6 +134,15 @@ def _question_terms(text):
 def company_evidence_from_database(company, question):
     """Load the selected company's own chunks and match them to the question."""
     try:
+        cached = Path("artifacts/healthcare_46_question_benchmark.json")
+        if cached.exists():
+            data = json.loads(cached.read_text(encoding="utf-8"))
+            for item in data.get("themes", []):
+                if item.get("question") == question:
+                    matches = [m for m in item.get("matches", []) if str(m.get("company", "")).upper() == str(company).upper()]
+                    if matches:
+                        return matches[:3]
+            return []
         settings = Settings.from_env()
         documents = list_recent_documents(settings, limit=100)
         selected = next((row for row in documents if str(row[2]).upper() == str(company).upper()), None)
@@ -147,6 +157,118 @@ def company_evidence_from_database(company, question):
         return useful
     except (CompanyLookupError, ValueError, RuntimeError):
         return None
+
+
+def load_uploaded_question_set(uploaded_file):
+    """Read question text and TOE construct from the supplied workbook."""
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(uploaded_file, read_only=True, data_only=True)
+    sheet = workbook["Results"] if "Results" in workbook.sheetnames else workbook.active
+    rows = list(sheet.iter_rows(values_only=True))
+    if not rows:
+        return []
+    headers = [str(value or "").strip() for value in rows[0]]
+    positions = {name: index for index, name in enumerate(headers)}
+    if "Question" not in positions:
+        raise ValueError("The workbook must contain a Results sheet with a Question column.")
+    questions = []
+    for row in rows[1:]:
+        question = str(row[positions["Question"]] or "").strip()
+        if not question:
+            continue
+        construct = str(row[positions.get("Construct", 0)] or "").strip()
+        toe_dimension = (
+            "technology" if construct in {"Data", "Technology", "Technical Skills"}
+            else "organization" if construct in {"Business Skills", "Inter-Departmental Coordination", "Organizational Change Capacity", "Basic Resources"}
+            else "environment"
+        )
+        questions.append({
+            "question_id": str(row[positions.get("Question ID", 0)] or ""),
+            "construct": construct,
+            "toe_dimension": toe_dimension,
+            "question": question,
+            "source": str(row[positions.get("Source", 0)] or "").strip(),
+        })
+    return questions
+
+
+def supplied_question_evidence(question, limit=5):
+    """Retrieve existing chunks and saved PostgreSQL AI scores; do not score/generate."""
+    import psycopg
+    from cis_fin.postgres import secure_postgres_dsn
+
+    settings = Settings.from_env()
+    stop_words = {"what", "does", "have", "with", "from", "into", "that", "this", "they", "their", "for", "and"}
+    terms = {word for word in re.findall(r"[a-zA-Z][a-zA-Z0-9-]{3,}", question.lower()) if word not in stop_words}
+    with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=15) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """SELECT c.chunk_id::text, c.page_start, c.page_end, c.chunk_text,
+                          s.score, s.confidence, s.rationale, s.evidence_quote,
+                          coalesce(co.symbol, '')
+                   FROM chunks c
+                   LEFT JOIN chunk_ai_scores s ON s.chunk_id=c.chunk_id AND s.status='completed'
+                   LEFT JOIN companies co ON co.company_id=c.company_id
+                   WHERE lower(coalesce(co.industry, '')) LIKE '%health%'
+                      OR lower(coalesce(co.industry, '')) LIKE '%pharma%'"""
+            )
+            candidates = []
+            for chunk_id, page_start, page_end, text_value, score, confidence, rationale, quote, symbol in cursor.fetchall():
+                chunk_terms = set(re.findall(r"[a-zA-Z][a-zA-Z0-9-]{3,}", (text_value or "").lower()))
+                overlap = len(terms & chunk_terms)
+                if overlap:
+                    candidates.append({
+                        "chunk_id": chunk_id, "company": symbol, "page_start": page_start,
+                        "page_end": page_end, "chunk_text": text_value, "ai_score": score,
+                        "confidence": confidence, "rationale": rationale or "", "evidence_quote": quote or "",
+                        "match_terms": overlap,
+                    })
+    candidates.sort(key=lambda item: (item["match_terms"], item["ai_score"] is not None, item["ai_score"] or -1), reverse=True)
+    return candidates[:limit]
+
+
+def healthcare_custom_questions_from_database():
+    """Load the persisted 46-question healthcare set and mapped evidence."""
+    cached = Path("artifacts/healthcare_46_question_benchmark.json")
+    if cached.exists():
+        return json.loads(cached.read_text(encoding="utf-8")).get("themes", [])
+    import psycopg
+    from cis_fin.postgres import secure_postgres_dsn
+
+    settings = Settings.from_env()
+    with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=15) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("""SELECT q.question_key, q.construct, q.toe_dimension, q.question_text, q.source,
+                                    e.chunk_id::text, c.page_start, c.page_end, c.chunk_text, e.match_count, co.symbol,
+                                    e.ai_score, e.ai_confidence, e.ai_rationale, e.evidence_quote
+                               FROM healthcare_custom_questions q
+                               LEFT JOIN healthcare_custom_question_evidence e ON e.question_id=q.question_id
+                               LEFT JOIN chunks c ON c.chunk_id=e.chunk_id
+                              ORDER BY q.question_key, e.match_count DESC NULLS LAST""")
+            grouped = {}
+            for key, construct, dimension, question, source, chunk_id, page_start, page_end, text_value, match_count, symbol, score, confidence, rationale, quote in cursor.fetchall():
+                item = grouped.setdefault(key, {"question_id": key, "construct": construct, "toe_dimension": dimension, "question": question, "source": source, "matches": []})
+                if chunk_id:
+                    item["matches"].append({"chunk_id": chunk_id, "company": symbol or "Healthcare", "page_start": page_start, "page_end": page_end, "chunk_text": text_value or "", "match_terms": match_count, "ai_score": score, "confidence": confidence, "rationale": rationale or "", "evidence_quote": quote or ""})
+    return list(grouped.values())
+
+
+def healthcare_custom_matrix(questions):
+    """Build company/question features from saved scores; missing values stay None."""
+    by_company = {}
+    for index, question in enumerate(questions):
+        for match in question.get("matches", []):
+            score = match.get("ai_score")
+            company = match.get("company")
+            if score is None or not company or company == "Healthcare":
+                continue
+            by_company.setdefault(company, {}).setdefault(index, []).append(float(score))
+    rows = []
+    for company, features in sorted(by_company.items()):
+        values = {"theme_{}".format(index): round(sum(scores) / len(scores), 2) for index, scores in features.items()}
+        rows.append({"company": company, "features": values, "feature_vector": [values.get("theme_{}".format(i)) for i in range(len(questions))], "provenance": {}})
+    return {"industry": "Healthcare", "fiscal_year": "2025-2026", "feature_names": ["theme_{}".format(i) for i in range(len(questions))], "rows": rows, "excluded": [], "training_ready": False, "training_note": "Uses saved PostgreSQL chunk scores. Missing scores remain unavailable and are excluded from averages."}
 
 
 def load_master_healthcare_companies():
@@ -207,7 +329,8 @@ else:
             st.session_state["selected_industry"] = industry
             st.session_state["selected_year"] = year
             st.session_state["comparison_selection_key"] = selection_key
-            st.switch_page("pages/Peer_Comparison.py" if selected_comparison == "Peer comparison" else "pages/Industry_Comparison.py")
+            st.session_state["comparison_mode"] = selected_comparison
+            st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
         st.stop()
     comparison_mode = st.session_state.get("comparison_mode")
@@ -223,6 +346,29 @@ else:
         except CompanyLookupError as exc:
             st.error(str(exc))
     benchmark = find_benchmark(industry, year)
+    if benchmark and normalize_industry(industry) == "Healthcare":
+        try:
+            custom_questions = healthcare_custom_questions_from_database()
+            if custom_questions:
+                benchmark["themes"] = [
+                    {
+                        "question": item["question"],
+                        "theme": item["construct"],
+                        "toe_dimension": item["toe_dimension"],
+                        "question_id": item["question_id"],
+                        "matches": item["matches"],
+                    }
+                    for item in custom_questions
+                ]
+                benchmark["companies"] = sorted({match["company"] for item in custom_questions for match in item["matches"] if match.get("company") and match["company"] != "Healthcare"})
+                cached_matrix = Path("artifacts/healthcare_46_question_benchmark.json")
+                if cached_matrix.exists():
+                    benchmark["_custom_matrix"] = json.loads(cached_matrix.read_text(encoding="utf-8")).get("matrix")
+                else:
+                    benchmark["_custom_matrix"] = healthcare_custom_matrix(custom_questions)
+                benchmark["question_count"] = len(custom_questions)
+        except Exception:
+            pass
     if not benchmark:
         st.warning("No same-industry/year benchmark is available yet.")
         uploaded_rows, upload_error = uploaded_reports_snapshot()
@@ -262,7 +408,7 @@ else:
             enriched = json.loads(evidence_artifact.read_text(encoding="utf-8")).get("themes", [])
             if len(enriched) >= len(themes):
                 themes = enriched[:len(themes)]
-        matrix = find_regression_matrix(benchmark)
+        matrix = benchmark.get("_custom_matrix") if normalize_industry(industry) == "Healthcare" else find_regression_matrix(benchmark)
         if st.session_state.get("client_view") == "question_explorer":
             if st.button("← Back to industry overview", key="back_from_explorer"):
                 st.session_state.pop("client_view", None)

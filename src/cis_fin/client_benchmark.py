@@ -43,7 +43,7 @@ def _healthcare_database_benchmark(year):
         with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=10) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    """SELECT theme_index, question_text, toe_dimension, chunk_ids
+                    """SELECT theme_index, question_text, toe_dimension, chunk_ids, ai_theme_label
                        FROM healthcare_benchmark_questions
                        WHERE benchmark_source=%s AND question_status IN ('active','generated')
                        ORDER BY theme_index""",
@@ -66,8 +66,8 @@ def _healthcare_database_benchmark(year):
             "fiscal_year": year,
             "companies": companies,
             "themes": [
-                {"question": question, "toe_dimension": dimension, "chunk_ids": chunk_ids}
-                for _, question, dimension, chunk_ids in question_rows
+                {"question": question, "toe_dimension": dimension, "chunk_ids": chunk_ids, "ai_theme_label": ai_theme_label}
+                for _, question, dimension, chunk_ids, ai_theme_label in question_rows
             ],
         }
     except Exception:
@@ -83,7 +83,7 @@ def _healthcare_database_questions(benchmark):
         with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=10) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    """SELECT theme_index, question_text, toe_dimension, chunk_ids
+                    """SELECT theme_index, question_text, toe_dimension, chunk_ids, ai_theme_label
                        FROM healthcare_benchmark_questions
                        WHERE question_status IN ('active', 'generated')
                        ORDER BY theme_index"""
@@ -91,8 +91,8 @@ def _healthcare_database_questions(benchmark):
                 rows = cursor.fetchall()
         if rows:
             benchmark["themes"] = [
-                {"question": question, "toe_dimension": dimension, "chunk_ids": chunk_ids}
-                for _, question, dimension, chunk_ids in rows
+                {"question": question, "toe_dimension": dimension, "chunk_ids": chunk_ids, "ai_theme_label": ai_theme_label}
+                for _, question, dimension, chunk_ids, ai_theme_label in rows
             ]
             benchmark["question_count"] = len(rows)
     except Exception:
