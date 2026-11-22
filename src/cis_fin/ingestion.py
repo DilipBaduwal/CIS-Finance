@@ -97,6 +97,9 @@ class IngestionStore(Protocol):
     def load_request(self, job_id: uuid.UUID, path: Path) -> Tuple[DocumentRequest, uuid.UUID]:
         ...
 
+    def clear_incomplete_chunks(self, document_id: uuid.UUID) -> int:
+        ...
+
 
 class PostgresIngestionStore:
     def __init__(self, settings: Settings):
@@ -560,6 +563,32 @@ class PostgresIngestionStore:
                 )
             ) from exc
 
+    def clear_incomplete_chunks(self, document_id: uuid.UUID) -> int:
+        """Remove only stale chunks from an incomplete extraction.
+
+        Downstream evidence, generation checkpoints, and embeddings are
+        protected. This is used only before rebuilding a partial extraction,
+        where parser drift makes the saved prefix unsafe to compare.
+        """
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        DELETE FROM chunks ch
+                        WHERE ch.document_id = %s
+                          AND NOT EXISTS (SELECT 1 FROM chunk_question_evidence e WHERE e.chunk_id = ch.chunk_id)
+                          AND NOT EXISTS (SELECT 1 FROM question_generation_checkpoints q WHERE q.chunk_id = ch.chunk_id)
+                          AND NOT EXISTS (SELECT 1 FROM embedding_registry er WHERE er.chunk_id = ch.chunk_id)
+                        """,
+                        (document_id,),
+                    )
+                    return cursor.rowcount
+        except self.psycopg.Error as exc:
+            raise IngestionError(
+                "Could not clear stale incomplete-extraction chunks ({}).".format(type(exc).__name__)
+            ) from exc
+
     def update_processing_page_range(self, job_id: uuid.UUID, page_start: int, page_end: int) -> None:
         """Change the downstream page window for a duplicate PDF resume."""
         if page_start < 1 or page_end < page_start:
@@ -968,6 +997,9 @@ def resume_extraction_job(
         checksum=checksum,
         duplicate=False,
     )
+    # The resume button bypasses register(). Clear the stale prefix here too;
+    # otherwise a Docling/PyMuPDF parser change causes chunk-index drift.
+    store.clear_incomplete_chunks(registered_document_id)
     # The checkpoint is authoritative. Researchers should not need to remember
     # the original page range when retrying the same uploaded PDF.
     return run_extraction_job(saved_request, registration, store, object_store, batch_size)
