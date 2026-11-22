@@ -6,6 +6,7 @@ import socket
 import subprocess
 import sys
 import uuid
+import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -707,12 +708,16 @@ class PostgresIngestionStore:
 
 
 def _safe_failure_message(exc: Exception) -> Tuple[str, str]:
+    # Keep the UI actionable without exposing credentials or full tracebacks.
+    detail = re.sub(r"(?i)(postgres(?:ql)?://)[^\s]+", r"\1[redacted]", str(exc))
+    detail = re.sub(r"(?i)(password|token|secret)=?[^\s,;]+", r"\1=[redacted]", detail)
+    detail = detail.strip()[:240]
     if isinstance(exc, ObjectStoreError):
-        return "object_storage_error", "Object storage stage failed; check endpoint, bucket, and service-account permissions."
+        return "object_storage_error", "Object storage stage failed ({}): {}".format(type(exc).__name__, detail or "no detail")
     if isinstance(exc, ExtractionError):
-        return "extraction_error", "PDF extraction failed; inspect file validity, encryption, selectable text, and parser configuration."
+        return "extraction_error", "PDF extraction failed ({}): {}".format(type(exc).__name__, detail or "no detail")
     if isinstance(exc, IngestionError):
-        return "ingestion_error", "Ingestion stage failed; inspect sanitized CLI output and service connectivity."
+        return "ingestion_error", "Ingestion stage failed ({}): {}".format(type(exc).__name__, detail or "no detail")
     return "unexpected_{}".format(type(exc).__name__.lower()), (
         "Unexpected processing failure ({}). Sensitive exception details were not recorded.".format(type(exc).__name__)
     )
@@ -850,7 +855,12 @@ def run_extraction_job(
             text=True,
         )
         if result.returncode != 0:
-            raise IngestionError("Chunk scoring failed after upload persistence; retry the document scoring job.")
+            detail = (result.stderr or result.stdout or "no scorer output").strip()[-240:]
+            raise IngestionError(
+                "Chunk scoring failed after upload persistence (exit {}): {}".format(
+                    result.returncode, detail
+                )
+            )
         return registration
     except Exception as exc:
         code, message = _safe_failure_message(exc)
