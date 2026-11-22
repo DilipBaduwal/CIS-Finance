@@ -210,9 +210,10 @@ class PostgresIngestionStore:
                         """
                         INSERT INTO processing_jobs (
                             job_id, document_id, researcher_id, stage, status,
-                            attempt_count, max_attempts, checkpoint
+                            attempt_count, max_attempts, lease_owner,
+                            lease_expires_at, completed_at, checkpoint
                         )
-                        VALUES (%s, %s, %s, 'registered', 'queued', 0, 5, %s)
+                        VALUES (%s, %s, %s, 'registered', 'queued', 0, 5, NULL, NULL, NULL, %s)
                         """,
                         (
                             job_id,
