@@ -172,7 +172,7 @@ class PipelineJobStore:
                     raise PipelineProcessingError("Job is already complete or cannot be stopped.")
                 cursor.execute(
                     """
-                    UPDATE documents SET processing_status = 'queued', updated_at = now()
+                    UPDATE documents SET processing_status = 'failed', updated_at = now()
                     WHERE document_id = (SELECT document_id FROM processing_jobs WHERE job_id = %s)
                     """,
                     (job_id,),

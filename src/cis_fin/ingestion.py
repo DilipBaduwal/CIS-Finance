@@ -188,6 +188,12 @@ class PostgresIngestionStore:
                             or int(existing[3]) < max(1, requested_end - requested_start + 1)
                         )
                         if incomplete_extraction:
+                            if job and job[2] == 'cancelled':
+                                return Registration(
+                                    document_id=existing[0], job_id=job[0], object_key=existing[1],
+                                    checksum=checksum, duplicate=True,
+                                    existing_status='cancelled', existing_stage=job[1],
+                                )
                             # A failed/partial extraction may have persisted a
                             # prefix with a parser-specific chunk hash.  That
                             # prefix cannot be compared against a recovered
@@ -330,6 +336,8 @@ class PostgresIngestionStore:
                     now = datetime.now(timezone.utc)
                     if status == "completed":
                         raise IngestionError("Job is already complete; no work was repeated.")
+                    if status == "cancelled":
+                        raise IngestionError("Job was stopped by the researcher and is permanently expired; no retry was started.")
                     if status == "running" and lease_until and lease_until > now:
                         raise IngestionError("Job is already leased by another worker; no work was started.")
                     if status == "queued" and stage in ("chunked", "questions", "embedded", "indexed"):

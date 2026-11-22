@@ -942,7 +942,7 @@ if submitted:
                     )
                 if (
                     result.duplicate
-                    and result.existing_status in ("queued", "failed", "retry_wait", "cancelled")
+                    and result.existing_status in ("queued", "failed", "retry_wait")
                     and result.existing_stage in ("registered", "stored", "extracted")
                 ):
                     result = resume_extraction_job(
@@ -954,7 +954,7 @@ if submitted:
                     )
                 if not result.duplicate or (
                     result.existing_stage in ("chunked", "questions", "embedded", "indexed")
-                    and result.existing_status in ("queued", "retry_wait", "cancelled")
+                    and result.existing_status in ("queued", "retry_wait")
                 ):
                     pipeline_result = run_pipeline_with_ui_progress(settings, result.job_id, progress)
                 if industry.strip().lower() in ("healthcare", "pharmaceuticals") and (pipeline_result is not None or not result.duplicate):
