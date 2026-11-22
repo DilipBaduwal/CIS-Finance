@@ -178,6 +178,7 @@ class PipelineJobStore:
                 # Stop means discard this document's derived processing work.
                 # Keep the document/job row as an audit marker, but remove all
                 # rebuildable artifacts so the next upload starts cleanly.
+                cursor.execute("DELETE FROM audit_events WHERE entity_id IN (%s, %s)", (document_id, job_id))
                 cursor.execute("""
                     DELETE FROM chunk_question_evidence
                     WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE document_id = %s)
@@ -196,10 +197,10 @@ class PipelineJobStore:
                     WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE document_id = %s)
                 """, (document_id,))
                 cursor.execute("DELETE FROM chunks WHERE document_id = %s", (document_id,))
-                cursor.execute(
-                    "UPDATE documents SET processing_status = 'failed', extraction_status = 'failed', updated_at = now() WHERE document_id = %s",
-                    (document_id,),
-                )
+                # Hard-delete both records. A subsequent upload of the same
+                # checksum must register as a brand-new document/job.
+                cursor.execute("DELETE FROM processing_jobs WHERE job_id = %s", (job_id,))
+                cursor.execute("DELETE FROM documents WHERE document_id = %s", (document_id,))
 
 
     def checkpoint(self, job_id: uuid.UUID, stage: str) -> None:
