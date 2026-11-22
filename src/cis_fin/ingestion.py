@@ -920,7 +920,12 @@ def resume_extraction_job(
             "The supplied PDF checksum/company does not match the document registered to this job; no work was started."
         )
     if saved_request.engine != request.engine:
-        raise IngestionError("Resume with the extraction engine recorded in the job checkpoint.")
+        # An incomplete extraction may be recovered with the reliable local
+        # PyMuPDF engine when the original adapter (for example Docling)
+        # stopped after only part of the selected page range.
+        if request.engine != "pymupdf":
+            raise IngestionError("Resume with the extraction engine recorded in the job checkpoint, or choose PyMuPDF for recovery.")
+        saved_request = replace(saved_request, engine="pymupdf")
     registration = Registration(
         document_id=registered_document_id,
         job_id=job_id,
