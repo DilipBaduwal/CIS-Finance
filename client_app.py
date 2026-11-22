@@ -26,12 +26,14 @@ st.set_page_config(page_title="CIS-FIN Client Benchmark", page_icon="📊", layo
 st.markdown("""
 <style>
 html, body, [data-testid="stAppViewContainer"] { background: #f5f7fb; color: #172033; }
+html, body, [data-testid="stAppViewContainer"], [data-testid="stAppViewContainer"] * { font-family: "Times New Roman", Times, serif !important; }
+[data-testid="stAppViewContainer"] { color: #000000 !important; }
 [data-testid="stHeader"] { background: #f5f7fb; }
 section[data-testid="stSidebar"] { display: none !important; }
-[data-testid="stWidgetLabel"] p, [data-testid="stWidgetLabel"] label, [data-testid="stMarkdownContainer"] p { color: #62708a !important; }
+[data-testid="stWidgetLabel"] p, [data-testid="stWidgetLabel"] label, [data-testid="stMarkdownContainer"] p { color: #000000 !important; }
 [data-testid="stTextInput"] input, [data-baseweb="select"] > div { background: #ffffff !important; color: #172033 !important; border: 1px solid #dce3ef !important; border-radius: 10px !important; }
 [data-testid="stFileUploader"] section { background: #ffffff !important; border: 1px solid #c9c5ba !important; }
-[data-testid="stRadio"] label { color: #3e454d !important; }
+[data-testid="stRadio"] label { color: #000000 !important; }
 [data-testid="stAlert"] p { color: #263746 !important; }
 .stButton > button { background: #2457d6 !important; color: #ffffff !important; border-radius: 10px; border: 0; padding: .65rem 1.2rem; font-weight: 650; }
 .stButton > button p, .stButton > button span, .stButton > button div { color: #ffffff !important; }
@@ -42,14 +44,15 @@ section[data-testid="stSidebar"] { display: none !important; }
 .step strong { display:block; color:#172033; margin-bottom:.2rem; }
 .helper { background:#edf3ff; border-radius:14px; padding:1rem 1.2rem; color:#31518b; margin:1rem 0; }
 .block-container { max-width: 1380px; padding: 2rem 2.5rem 5rem; }
-h1, h2, h3 { font-family: Inter, sans-serif; color: #172033; letter-spacing: -.02em; }
+h1, h2, h3 { font-family: "Times New Roman", Times, serif !important; color: #000000; letter-spacing: -.02em; }
 .hero { background: linear-gradient(135deg,#14264d 0%,#2457d6 100%); padding: 2.2rem 2.3rem; border-radius: 22px; color:#fff; box-shadow: 0 16px 40px #1e3b7a25; }
 .hero h1 { color:#fff; font-size: 3.15rem; margin: 0; letter-spacing: -2px; }
 .hero p { color: #dce7ff !important; font-size: 1.08rem; margin: .45rem 0 0; }
 .card { background: #fff; border: 1px solid #e1e7f1; border-radius: 18px; padding: 1.35rem 1.5rem; box-shadow: 0 8px 24px #243b6b0d; min-height: 150px; }
+.snapshot { height: 190px; display:flex; flex-direction:column; justify-content:center; box-sizing:border-box; }
 .eyebrow { color: #62708a; font-size: .8rem; text-transform: uppercase; letter-spacing: .09em; font-weight: 700; }
 .big-score { font: 4.8rem Inter, sans-serif; font-weight: 750; color:#173ea7; line-height: 1; margin-top: .45rem; }
-.muted { color: #62708a; }
+.muted { color: #000000; }
 .section { background: #fff; border: 1px solid #e1e7f1; border-radius: 18px; padding: 1.35rem 1.5rem; margin-top: 1.25rem; box-shadow: 0 8px 24px #243b6b0d; }
 .factor { display: grid; grid-template-columns: 27% 53% 20%; align-items: center; gap: 1rem; padding: .8rem 0; border-top: 1px solid #ebe8df; }
 .bar { height: 11px; background: #e7edf7; border-radius: 99px; overflow: hidden; }
@@ -58,7 +61,36 @@ h1, h2, h3 { font-family: Inter, sans-serif; color: #172033; letter-spacing: -.0
 .subhead { font-weight: 700; margin: 1.2rem 0 .3rem; font-size: 1.1rem; }
 .hero-kicker { text-transform: uppercase; letter-spacing: .12em; font-size: .75rem; color: #32648f; font-weight: 700; }
 .insight { background: #eef4f7; border-left: 4px solid #32648f; border-radius: 12px; padding: .9rem 1.1rem; color: #3e596b; }
-.score-label { color:#626a72; font-size:.9rem; text-transform:uppercase; letter-spacing:.08em; }
+.score-label { color:#000000; font-size:.9rem; text-transform:uppercase; letter-spacing:.08em; }
+@media (prefers-color-scheme: dark) {
+  html, body, [data-testid="stAppViewContainer"], [data-testid="stHeader"] { background:#0f172a !important; color:#e5e7eb !important; }
+  [data-testid="stWidgetLabel"] p, [data-testid="stWidgetLabel"] label, [data-testid="stMarkdownContainer"] p, .muted, .score-label { color:#b8c3d6 !important; }
+  h1, h2, h3, [data-testid="stMarkdownContainer"] strong, [data-testid="stMarkdownContainer"] b { color:#f3f6fb !important; }
+  .step, .card, .section { background:#172033 !important; border-color:#334155 !important; color:#e5e7eb !important; }
+  .step strong, .card h2, .card h3, .card b { color:#f3f6fb !important; }
+  [data-testid="stTextInput"] input, [data-baseweb="select"] > div { background:#172033 !important; color:#f3f6fb !important; border-color:#475569 !important; }
+  [data-testid="stRadio"] label, [data-testid="stAlert"] p { color:#dbe4f2 !important; }
+  .bar { background:#334155 !important; }
+  .stButton > button, .stButton > button[kind="secondary"] { background:#2457d6 !important; color:#ffffff !important; border-color:#2457d6 !important; }
+  .stButton > button p, .stButton > button span, .stButton > button div { color:#ffffff !important; }
+}
+[data-theme="dark"] [data-testid="stAppViewContainer"], [data-theme="dark"] [data-testid="stHeader"] { background:#0f172a !important; color:#e5e7eb !important; }
+[data-theme="dark"] .step, [data-theme="dark"] .card, [data-theme="dark"] .section { background:#172033 !important; border-color:#334155 !important; color:#e5e7eb !important; }
+[data-theme="dark"] h1, [data-theme="dark"] h2, [data-theme="dark"] h3, [data-theme="dark"] .muted { color:#f3f6fb !important; }
+[data-theme="dark"] div[data-testid="stButton"] button, [data-theme="dark"] div[data-testid="stButton"] button p { background:#2457d6 !important; color:#ffffff !important; }
+[data-theme="dark"] div[data-testid="stButton"] button:hover, [data-theme="dark"] div[data-testid="stButton"] button:hover p { background:#3264df !important; color:#ffffff !important; }
+/* Keep the local dashboard consistent even when the browser/Streamlit theme is dark. */
+html, body, [data-testid="stAppViewContainer"], [data-testid="stHeader"] { background:#f5f7fb !important; color:#000000 !important; }
+[data-testid="stAppViewContainer"] h1, [data-testid="stAppViewContainer"] h2, [data-testid="stAppViewContainer"] h3,
+[data-testid="stAppViewContainer"] p, [data-testid="stAppViewContainer"] label,
+[data-testid="stAppViewContainer"] .muted, [data-testid="stAppViewContainer"] .score-label,
+[data-testid="stAppViewContainer"] strong, [data-testid="stAppViewContainer"] b { color:#000000 !important; }
+[data-testid="stTextInput"] input, [data-baseweb="select"] > div { background:#ffffff !important; color:#000000 !important; }
+.step, .card, .section { background:#ffffff !important; color:#000000 !important; }
+.hero h1, .hero p, .hero .hero-kicker, .stButton > button, .stButton > button p, .stButton > button span { color:#ffffff !important; }
+.card b, .card strong, .card span, .card small, .section b, .section strong, .factor, .factor-value,
+[data-testid="stMarkdownContainer"] .card b, [data-testid="stMarkdownContainer"] .card span { color:#000000 !important; }
+.hero b, .hero strong, .hero span, .hero small { color:#ffffff !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -131,9 +163,38 @@ def _question_terms(text):
     return {word for word in re.findall(r"[a-zA-Z][a-zA-Z0-9-]{3,}", (text or "").lower()) if word not in {"what", "does", "this", "that", "with", "from", "evidence", "company"}}
 
 
-def company_evidence_from_database(company, question):
+def company_evidence_from_database(company, question, question_id=None):
     """Load the selected company's own chunks and match them to the question."""
     try:
+        # Healthcare evidence and AI rationales live in PostgreSQL. Query it
+        # first; the JSON artifact is a legacy fallback and often has scores
+        # without the supporting text or rationale.
+        import psycopg
+        from cis_fin.postgres import secure_postgres_dsn
+
+        settings = Settings.from_env()
+        with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=15) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT e.chunk_id::text, c.page_start, c.page_end, c.chunk_text,
+                           e.ai_score, e.ai_confidence, e.ai_rationale, e.evidence_quote
+                      FROM healthcare_custom_question_evidence e
+                      JOIN healthcare_custom_questions q ON q.question_id=e.question_id
+                      JOIN chunks c ON c.chunk_id=e.chunk_id
+                      JOIN companies co ON co.company_id=c.company_id
+                     WHERE upper(coalesce(co.symbol, '')) = upper(%s)
+                       AND (q.question_key = %s OR q.question_text = %s)
+                     ORDER BY e.ai_score DESC NULLS LAST, e.match_count DESC NULLS LAST
+                     LIMIT 5
+                """, (str(company), question_id or "", question))
+                live_records = [
+                    {"chunk_id": row[0], "page_start": row[1], "page_end": row[2], "chunk_text": row[3] or "",
+                     "ai_score": row[4], "confidence": row[5], "rationale": row[6] or "", "evidence_quote": row[7] or ""}
+                    for row in cursor.fetchall()
+                ]
+        if live_records:
+            return live_records
+
         cached = Path("artifacts/healthcare_46_question_benchmark.json")
         if cached.exists():
             data = json.loads(cached.read_text(encoding="utf-8"))
@@ -230,28 +291,32 @@ def supplied_question_evidence(question, limit=5):
 
 def healthcare_custom_questions_from_database():
     """Load the persisted 46-question healthcare set and mapped evidence."""
-    cached = Path("artifacts/healthcare_46_question_benchmark.json")
-    if cached.exists():
-        return json.loads(cached.read_text(encoding="utf-8")).get("themes", [])
     import psycopg
     from cis_fin.postgres import secure_postgres_dsn
 
-    settings = Settings.from_env()
-    with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=15) as connection:
-        with connection.cursor() as cursor:
-            cursor.execute("""SELECT q.question_key, q.construct, q.toe_dimension, q.question_text, q.source,
-                                    e.chunk_id::text, c.page_start, c.page_end, c.chunk_text, e.match_count, co.symbol,
-                                    e.ai_score, e.ai_confidence, e.ai_rationale, e.evidence_quote
-                               FROM healthcare_custom_questions q
-                               LEFT JOIN healthcare_custom_question_evidence e ON e.question_id=q.question_id
-                               LEFT JOIN chunks c ON c.chunk_id=e.chunk_id
-                              ORDER BY q.question_key, e.match_count DESC NULLS LAST""")
-            grouped = {}
-            for key, construct, dimension, question, source, chunk_id, page_start, page_end, text_value, match_count, symbol, score, confidence, rationale, quote in cursor.fetchall():
-                item = grouped.setdefault(key, {"question_id": key, "construct": construct, "toe_dimension": dimension, "question": question, "source": source, "matches": []})
-                if chunk_id:
-                    item["matches"].append({"chunk_id": chunk_id, "company": symbol or "Healthcare", "page_start": page_start, "page_end": page_end, "chunk_text": text_value or "", "match_terms": match_count, "ai_score": score, "confidence": confidence, "rationale": rationale or "", "evidence_quote": quote or ""})
-    return list(grouped.values())
+    try:
+        settings = Settings.from_env()
+        with psycopg.connect(secure_postgres_dsn(settings.database_url), connect_timeout=15) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("""SELECT q.question_key, q.construct, q.toe_dimension, q.question_text, q.source,
+                                        e.chunk_id::text, c.page_start, c.page_end, c.chunk_text, e.match_count, co.symbol,
+                                        e.ai_score, e.ai_confidence, e.ai_rationale, e.evidence_quote
+                                   FROM healthcare_custom_questions q
+                                   LEFT JOIN healthcare_custom_question_evidence e ON e.question_id=q.question_id
+                                   LEFT JOIN chunks c ON c.chunk_id=e.chunk_id
+                                   LEFT JOIN companies co ON co.company_id=c.company_id
+                                  ORDER BY q.question_key, e.match_count DESC NULLS LAST""")
+                grouped = {}
+                for key, construct, dimension, question, source, chunk_id, page_start, page_end, text_value, match_count, symbol, score, confidence, rationale, quote in cursor.fetchall():
+                    item = grouped.setdefault(key, {"question_id": key, "construct": construct, "toe_dimension": dimension, "question": question, "source": source, "matches": []})
+                    if chunk_id:
+                        item["matches"].append({"chunk_id": chunk_id, "company": symbol or "Healthcare", "page_start": page_start, "page_end": page_end, "chunk_text": text_value or "", "match_terms": match_count, "ai_score": score, "confidence": confidence, "rationale": rationale or "", "evidence_quote": quote or ""})
+        return list(grouped.values())
+    except Exception:
+        cached = Path("artifacts/healthcare_46_question_benchmark.json")
+        if cached.exists():
+            return json.loads(cached.read_text(encoding="utf-8")).get("themes", [])
+        raise
 
 
 def healthcare_custom_matrix(questions):
@@ -269,6 +334,17 @@ def healthcare_custom_matrix(questions):
         values = {"theme_{}".format(index): round(sum(scores) / len(scores), 2) for index, scores in features.items()}
         rows.append({"company": company, "features": values, "feature_vector": [values.get("theme_{}".format(i)) for i in range(len(questions))], "provenance": {}})
     return {"industry": "Healthcare", "fiscal_year": "2025-2026", "feature_names": ["theme_{}".format(i) for i in range(len(questions))], "rows": rows, "excluded": [], "training_ready": False, "training_note": "Uses saved PostgreSQL chunk scores. Missing scores remain unavailable and are excluded from averages."}
+
+
+def healthcare_score_color(score):
+    """Use one monotonic blue scale for the provisional Healthcare pilot."""
+    if score is None:
+        return "#62708a"
+    if score < 40:
+        return "#9bb5ef"
+    if score < 70:
+        return "#5f83df"
+    return "#2457d6"
 
 
 def load_master_healthcare_companies():
@@ -361,11 +437,10 @@ else:
                     for item in custom_questions
                 ]
                 benchmark["companies"] = sorted({match["company"] for item in custom_questions for match in item["matches"] if match.get("company") and match["company"] != "Healthcare"})
-                cached_matrix = Path("artifacts/healthcare_46_question_benchmark.json")
-                if cached_matrix.exists():
-                    benchmark["_custom_matrix"] = json.loads(cached_matrix.read_text(encoding="utf-8")).get("matrix")
-                else:
-                    benchmark["_custom_matrix"] = healthcare_custom_matrix(custom_questions)
+                # Build from the live rows above so completed scoring immediately
+                # appears in the client app; the artifact is only a fallback for
+                # database-unavailable mode.
+                benchmark["_custom_matrix"] = healthcare_custom_matrix(custom_questions)
                 benchmark["question_count"] = len(custom_questions)
         except Exception:
             pass
@@ -450,6 +525,54 @@ else:
             else:
                 st.info("Company scores are not available for this benchmark yet.")
             st.stop()
+        if st.session_state.get("client_view") == "company_detail":
+            selected_company = st.session_state.get("client_selected_company")
+            company_row = next((row for row in benchmark_matrix_rows(matrix, benchmark) if str(row.get("company")) == str(selected_company)), None)
+            if not company_row:
+                st.error("Company scores are not available for this benchmark yet.")
+                st.stop()
+            if st.button("← Back to industry overview", key="back_from_company_detail"):
+                st.session_state.pop("client_view", None)
+                st.session_state.pop("client_selected_company", None)
+                st.rerun()
+            values = company_row.get("feature_vector", [])
+            available = [value for value in values if isinstance(value, (int, float))]
+            overall = round(sum(available) / len(available) * 20, 1) if available else None
+            st.markdown('<div class="hero"><div class="hero-kicker" style="color:#bcd0ff">COMPANY DETAIL</div><h1>{}</h1><p>{} · {} · question-level AI-readiness evidence</p></div>'.format(selected_company, normalize_industry(industry), normalize_fiscal_year(year)), unsafe_allow_html=True)
+            summary = st.columns(3)
+            with summary[0]:
+                st.markdown('<div class="card snapshot"><small>COMPANY TOE SCORE</small><div class="big-score">{}</div><span>/ 100</span></div>'.format(overall if overall is not None else "—"), unsafe_allow_html=True)
+            with summary[1]:
+                st.markdown('<div class="card snapshot"><small>QUESTIONS WITH SCORES</small><div class="big-score">{}</div><span>/ {}</span></div>'.format(len(available), len(themes)), unsafe_allow_html=True)
+            with summary[2]:
+                st.markdown('<div class="card snapshot"><small>INDUSTRY</small><h2>{}</h2><span>{}</span></div>'.format(normalize_industry(industry), normalize_fiscal_year(year)), unsafe_allow_html=True)
+            st.markdown("### TOE question scores")
+            st.caption("All 46 Healthcare TOE questions are shown below. Expand any question to review its AI rationale, AI evidence quote, and source chunks.")
+            question_items = []
+            for index, theme in enumerate(themes):
+                value = values[index] if index < len(values) and isinstance(values[index], (int, float)) else None
+                question_items.append((index, theme, value))
+            question_items.sort(key=lambda item: (item[2] is not None, item[2] if item[2] is not None else -1), reverse=True)
+            for index, theme, value in question_items:
+                score = round(value * 20, 1) if value is not None else None
+                st.markdown('<div class="card" style="min-height:0"><small>{} · Question {}</small><h3>{}</h3><strong>{}</strong> / 100 <span class="muted"> · AI score: {} / 5</span></div>'.format(theme.get("toe_dimension", "TOE").title(), index + 1, theme.get("question", ""), score if score is not None else "Not available", value if value is not None else "—"), unsafe_allow_html=True)
+                if value is not None:
+                    with st.expander("View AI evidence and source chunks"):
+                        records = company_evidence_from_database(selected_company, theme.get("question", ""), theme.get("question_id"))
+                        rationale = next((record.get("rationale") for record in records or [] if record.get("rationale")), "No AI rationale was saved for this score.")
+                        quotes = [record.get("evidence_quote") for record in records or [] if record.get("evidence_quote")]
+                        st.markdown("**AI scoring rationale**")
+                        st.write(rationale)
+                        st.markdown("**AI evidence quote**")
+                        st.write("\n\n".join(quotes) if quotes else "No AI evidence quote was saved for this score.")
+                        st.markdown("**Source chunks**")
+                        if records:
+                            for record in records:
+                                st.caption("Pages {}–{} · {}".format(record.get("page_start", "?"), record.get("page_end", "?"), record.get("chunk_id", "")))
+                                st.write(record.get("chunk_text", "")[:2000])
+                        else:
+                            st.info("No supporting chunk was found for this company and question.")
+            st.stop()
         if st.session_state.get("client_view") == "factor_detail":
             if st.button("← Back to industry overview", key="client_back_overview"):
                 st.session_state.pop("client_view", None)
@@ -481,13 +604,28 @@ else:
                     evidence_text = feature.get("evidence_quote", evidence_text)
                     rationale = feature.get("rationale", rationale)
                     chunk_ids = feature.get("supporting_chunk_ids", chunk_ids)
-                database_records = company_evidence_from_database(selected_company, selected_question)
+                database_records = company_evidence_from_database(selected_company, selected_question, selected_theme.get("question_id"))
                 if database_records:
                     chunk_ids = [record.get("chunk_id") for record in database_records]
                     evidence_text = "\n\n".join("Pages {}–{}:\n{}".format(record.get("page_start", "?"), record.get("page_end", "?"), record.get("chunk_text", "")[:1200]) for record in database_records)
-                st.markdown('<div class="card"><div class="eyebrow">{} · {}/100</div><h2>Why this company received this score</h2><p class="muted">This evidence is loaded for the selected company and selected question. Changing the company above changes this section.</p><p><b>Scoring rationale</b></p><p>{}</p><p><b>Supporting chunk IDs</b></p><p>{}</p><p><b>Source evidence</b></p><p>{}</p></div>'.format(selected_company, company_score.get("Score (0–100)", "—"), rationale, ", ".join(chunk_ids) or "Not stored in this artifact", evidence_text), unsafe_allow_html=True)
+                    rationale = next((record.get("rationale") for record in database_records if record.get("rationale")), rationale)
+                ai_evidence = "\n\n".join(record.get("evidence_quote", "") for record in (database_records or []) if record.get("evidence_quote"))
+                st.markdown('<div class="section"><div class="eyebrow">{} · {}/100</div><h2>Why this company received this score</h2><p class="muted">This evidence is loaded for the selected company and selected question.</p></div>'.format(selected_company, company_score.get("Score (0–100)", "—")), unsafe_allow_html=True)
+                st.markdown("### AI scoring rationale")
+                st.write(rationale or "No AI rationale was saved for this score.")
+                st.markdown("### AI evidence quote")
+                st.write(ai_evidence or "No AI evidence quote was saved for this score.")
+                st.markdown("### Supporting chunks")
+                if database_records:
+                    for record in database_records:
+                        with st.expander("Pages {}–{} · {}".format(record.get("page_start", "?"), record.get("page_end", "?"), record.get("chunk_id", "")), expanded=True):
+                            st.write(record.get("chunk_text", "")[:2000])
+                else:
+                    st.info("No supporting chunk was found for this company and question.")
             st.stop()
-        st.markdown('<div class="muted">{} · {} · {} peer companies · {} benchmark factors</div>'.format(normalize_industry(industry), normalize_fiscal_year(year), len(benchmark.get("companies", [])), len(themes)), unsafe_allow_html=True)
+        st.markdown('<div class="hero"><div class="hero-kicker" style="color:#bcd0ff">INDUSTRY COMPARISON</div><h1>{}</h1><p>TOE framework · {} · {} peer companies</p></div>'.format(normalize_industry(industry), normalize_fiscal_year(year), len(benchmark.get("companies", []))), unsafe_allow_html=True)
+        if normalize_industry(industry) == "Healthcare":
+            st.warning("Healthcare scores are provisional. A review found some evidence/question mismatches and the cohort is being re-scored with stricter relevance checks.")
         rows = []
         if matrix.get("rows"):
             cohort_rows = benchmark_matrix_rows(matrix, benchmark)
@@ -500,35 +638,55 @@ else:
         for index, row in enumerate(rows):
             dimension = themes[index].get("toe_dimension", "technology") if index < len(themes) else "technology"
             dimensions.setdefault(dimension, []).append(row["Industry average (0–5)"] * 20)
-        cols = st.columns(2)
-        with cols[0]:
-            st.markdown('<div class="card"><div class="eyebrow">{} cumulative score</div><div class="big-score">{}</div><div class="muted">/ 100 · peer companies weighted by factor</div></div>'.format(normalize_industry(industry), int(overall) if overall is not None else "—"), unsafe_allow_html=True)
-        with cols[1]:
-            html = '<div class="card"><h3>By TOE dimension</h3>'
-            colors = {"technology": "#32648f", "organization": "#a06b0b", "environment": "#347751"}
-            for dimension, values in dimensions.items():
-                value = round(sum(values) / len(values)) if values else 0
-                html += '<div class="factor"><span>{}</span><div class="bar"><div class="fill" style="width:{}%;background:{}"></div></div><b>{}</b></div>'.format(dimension.title(), value, colors[dimension], value)
-            st.markdown(html + '</div>', unsafe_allow_html=True)
+        st.markdown("### Industry snapshot")
+        snapshot = st.columns(3)
         company_rankings = company_overall_scores(matrix, benchmark)
-        if company_rankings:
-            best = company_rankings[0]
-            left, right = st.columns([1, 2])
-            with left:
-                st.markdown('<div class="card"><div class="score-label">Top company</div><h2>{}</h2><div class="big-score">{}</div><div class="muted">/ 100 overall score</div></div>'.format(best["company"], int(best["score"])), unsafe_allow_html=True)
-            with right:
-                st.markdown('<div class="card"><div class="score-label">Cohort snapshot</div><h3>How does the sector compare?</h3><p class="muted">{} companies are ranked across {} benchmark questions. Open the explorer to compare any two companies and inspect the evidence behind each difference.</p>'.format(len(company_rankings), len(themes)), unsafe_allow_html=True)
-                if st.button("Open question explorer →", type="primary", key="open_question_explorer"):
-                    st.session_state["client_view"] = "question_explorer"
+        with snapshot[0]:
+            st.markdown('<div class="card snapshot"><small>INDUSTRY TOE SCORE</small><div class="big-score">{}</div><span>/ 100</span></div>'.format(int(overall) if overall is not None else "—"), unsafe_allow_html=True)
+        with snapshot[1]:
+            best = company_rankings[0] if company_rankings else None
+            st.markdown('<div class="card snapshot"><small>TOP COMPANY</small><h2>{}</h2><div class="big-score">{}</div><span>/ 100</span></div>'.format(best["company"] if best else "—", int(best["score"]) if best else "—"), unsafe_allow_html=True)
+        with snapshot[2]:
+            st.markdown('<div class="card snapshot"><small>BENCHMARK QUESTIONS</small><div class="big-score">{}</div><span>TOE factors</span></div>'.format(len(themes)), unsafe_allow_html=True)
+
+        st.markdown("### TOE performance")
+        colors = {"technology": "#2457d6", "organization": "#32648f", "environment": "#173ea7"}
+        for dimension in ("technology", "organization", "environment"):
+            values = dimensions.get(dimension, [])
+            value = round(sum(values) / len(values)) if values else 0
+            st.markdown('<div class="card" style="margin:.6rem 0;min-height:0;padding:1rem 1.2rem"><b>{}</b><div class="bar"><div class="fill" style="width:{}%;background:{}"></div></div><strong>{} / 100</strong></div>'.format(dimension.title(), value, colors[dimension], value), unsafe_allow_html=True)
+
+        st.markdown("### Company ranking")
+        st.caption("Open a company to review every available TOE question score.")
+        for rank, company_row in enumerate(company_rankings, 1):
+            company_name = company_row["company"]
+            col_name, col_score, col_open, col_compare = st.columns([5, 2, 1, 1])
+            with col_name:
+                st.markdown("**{} · {}**".format(rank, company_name))
+            with col_score:
+                st.markdown('<b style="color:{}">{} / 100</b>'.format(healthcare_score_color(company_row["score"]) if normalize_industry(industry) == "Healthcare" else "#172033", company_row["score"]), unsafe_allow_html=True)
+            with col_open:
+                if st.button("Open", key="healthcare_company_open_{}".format(company_name)):
+                    st.session_state["client_view"] = "company_detail"
+                    st.session_state["client_detail_company"] = company_name
+                    st.session_state["client_selected_company"] = company_name
                     st.rerun()
-                st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('<div class="section"><h3>Factors and weights</h3><p class="muted">Scores are calculated from comparable annual-report evidence for this industry and year.</p>', unsafe_allow_html=True)
+            with col_compare:
+                if st.button("Compare", key="healthcare_company_compare_{}".format(company_name)):
+                    st.session_state["client_view"] = "question_explorer"
+                    st.session_state["compare_company_a"] = company_name
+                    st.rerun()
+        if st.button("Open question explorer", type="primary", key="open_question_explorer"):
+            st.session_state["client_view"] = "question_explorer"
+            st.rerun()
+        st.markdown('<div class="section"><h3>TOE questions</h3><p class="muted">Industry-average score for every benchmark question. Scores are shown on a 0–100 scale.</p>', unsafe_allow_html=True)
         for index, row in enumerate(rows):
             dimension = themes[index].get("toe_dimension", "technology") if index < len(themes) else "technology"
             value = round(row["Industry average (0–5)"] * 20)
             question_text = themes[index].get("question", row["TOE question"]) if index < len(themes) else row["TOE question"]
-            st.markdown('<div class="factor"><span>{}</span><div class="bar"><div class="fill" style="width:{}%;background:{}"></div></div><span class="factor-value">{} / 100 · {}<br><small>select below for detail</small></span></div>'.format(question_text, value, colors.get(dimension, "#32648f"), value, dimension.title()), unsafe_allow_html=True)
-            if st.button("View question evidence →", key="open_factor_{}".format(index), type="secondary"):
+            score_color = healthcare_score_color(value) if normalize_industry(industry) == "Healthcare" else "#2457d6"
+            st.markdown('<div class="card" style="min-height:0;padding:1rem 1.2rem;margin:.6rem 0"><small>{} · Question {}</small><br><b>{}</b><br><span>Industry average: <strong style="color:{}">{} / 100</strong></span></div>'.format(dimension.title(), index + 1, question_text, score_color, value), unsafe_allow_html=True)
+            if st.button("Open", key="open_factor_{}".format(index), type="secondary"):
                 st.session_state["client_selected_factor"] = index
                 st.session_state["client_view"] = "factor_detail"
                 st.rerun()

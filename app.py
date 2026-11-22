@@ -5,6 +5,7 @@ import tempfile
 import uuid
 import json
 import os
+import subprocess
 import sys
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -871,6 +872,23 @@ if submitted:
                     and result.existing_status in ("queued", "retry_wait", "cancelled")
                 ):
                     pipeline_result = run_pipeline_with_ui_progress(settings, result.job_id, progress)
+                if industry.strip().lower() in ("healthcare", "pharmaceuticals") and (pipeline_result is not None or not result.duplicate):
+                    with st.status("Running Healthcare 46-question evidence scoring…", expanded=True) as healthcare_status:
+                        scoring_command = [
+                            sys.executable,
+                            str(Path(__file__).resolve().parent / "scripts" / "score_healthcare_company.py"),
+                            "--company-id",
+                            str(company_id),
+                        ]
+                        scoring_environment = dict(os.environ)
+                        scoring_environment["PYTHONPATH"] = str(Path(__file__).resolve().parent / "src")
+                        scoring = subprocess.run(scoring_command, cwd=str(Path(__file__).resolve().parent), env=scoring_environment, capture_output=True, text=True)
+                        if scoring.returncode != 0:
+                            healthcare_status.update(label="Healthcare scoring failed", state="error")
+                            st.error(scoring.stderr[-2000:] or "Healthcare scoring failed without an error message.")
+                        else:
+                            healthcare_status.update(label="Healthcare 46-question scoring complete", state="complete")
+                            st.success("Healthcare evidence was retrieved and scored specifically for this company.")
             if result.duplicate:
                 progress.update(label="Existing document processing checked", state="complete")
                 if pipeline_result is None:

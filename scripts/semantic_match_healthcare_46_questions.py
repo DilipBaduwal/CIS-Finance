@@ -16,7 +16,7 @@ BENCHMARK = "healthcare_46_question_results"
 
 def main():
     parser = argparse.ArgumentParser(description="Semantic-match healthcare questions against Qdrant chunks")
-    parser.add_argument("--top-k", type=int, default=100, help="Number of semantic candidates to keep per question")
+    parser.add_argument("--top-k", type=int, default=5, help="Number of semantic candidates to keep per question")
     args = parser.parse_args()
     if args.top_k < 1:
         raise ValueError("--top-k must be positive")
@@ -49,15 +49,15 @@ def main():
                     if chunk_id not in healthcare_ids or chunk_id not in chunk_text:
                         continue
                     page_start, page_end, text = chunk_text[chunk_id]
-                    saved = scores.get(chunk_id, (None, None, "", ""))
-                    matches.append((float(point.get("score", 0)), chunk_id, page_start, page_end, text, saved))
+                    # Scores must be generated for the question+chunk pair.
+                    # Never copy a generic chunk score into a new question.
+                    matches.append((float(point.get("score", 0)), chunk_id, page_start, page_end, text))
                 matches.sort(reverse=True, key=lambda x: x[0])
                 cursor.execute("DELETE FROM healthcare_custom_question_evidence WHERE question_id=%s", (question_id,))
-                for similarity, chunk_id, page_start, page_end, text, saved in matches[:args.top_k]:
-                    score, confidence, rationale, quote = saved
+                for similarity, chunk_id, page_start, page_end, text in matches[:args.top_k]:
                     cursor.execute("""INSERT INTO healthcare_custom_question_evidence
                         (question_id, chunk_id, match_count, ai_score, ai_confidence, ai_rationale, evidence_quote)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s)""", (question_id, chunk_id, round(similarity * 1000), score, confidence, rationale or "", quote or ""))
+                        VALUES (%s,%s,%s,NULL,NULL,'','')""", (question_id, chunk_id, round(similarity * 1000)))
                 print("{}/{} {}: semantic matches {} (top-k={})".format(questions.index((question_id, question_key, question_text)) + 1, len(questions), question_key, len(matches[:args.top_k]), args.top_k), flush=True)
         connection.commit()
     print("Semantic matching complete for {} questions.".format(len(questions)))
