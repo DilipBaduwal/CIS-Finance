@@ -5,8 +5,10 @@ import tempfile
 import uuid
 import json
 import os
+import re
 import subprocess
 import sys
+from collections import deque
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -160,8 +162,60 @@ def run_pipeline_with_ui_progress(current_settings, job_id, status_container):
     return process_document_pipeline(current_settings, job_id, progress_callback=report)
 
 
+
+def run_healthcare_scoring_with_ui_progress(company_id):
+    root = Path(__file__).resolve().parent
+    command = [
+        sys.executable, "-u", str(root / "scripts" / "score_healthcare_company.py"),
+        "--company-id", str(company_id),
+    ]
+    environment = dict(os.environ, PYTHONPATH=str(root / "src"))
+    with st.status("Running Healthcare 46-question evidence scoring…", expanded=True) as status:
+        retrieval = st.progress(0, text="Searching the company's indexed passages…")
+        review = st.empty()
+        details = st.empty()
+        recent_output = deque(maxlen=20)
+        scored_questions = set()
+        scored_pairs = irrelevant_pairs = 0
+        with subprocess.Popen(
+            command, cwd=root, env=environment, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True, bufsize=1,
+        ) as scoring:
+            for raw_line in scoring.stdout:
+                line = raw_line.strip()
+                recent_output.append(raw_line)
+                match = re.fullmatch(r"Retrieved (\d+)/(\d+) (.+): (\d+) candidates", line)
+                if match:
+                    completed, total, question, candidates = match.groups()
+                    retrieval.progress(
+                        int(completed) / int(total),
+                        text=f"Evidence search · {completed}/{total} questions · {question}: {candidates} passages",
+                    )
+                    continue
+                match = re.fullmatch(r"Reviewed (\d+)/(\d+) (.+): (irrelevant|[0-5]/5)", line)
+                if match:
+                    completed, total, question, outcome = match.groups()
+                    if outcome == "irrelevant":
+                        irrelevant_pairs += 1
+                    else:
+                        scored_pairs += 1
+                        scored_questions.add(question)
+                    review.progress(int(completed) / int(total), text=f"Reviewed {completed}/{total} question–passage pairs")
+                    details.write(
+                        f"{scored_pairs} scored · {irrelevant_pairs} irrelevant · "
+                        f"{len(scored_questions)}/46 questions with a score"
+                    )
+            if scoring.wait() != 0:
+                status.update(label="Healthcare scoring failed", state="error")
+                st.error("".join(recent_output)[-2000:] or "Healthcare scoring failed without an error message.")
+                return
+        status.update(label="Healthcare 46-question scoring complete", state="complete")
+        if not scored_pairs and not irrelevant_pairs:
+            details.write("No passages were retrieved for scoring.")
+
+
 @st.fragment(run_every="10s")
-def render_live_progress(current_settings, document_id):
+def render_live_progress(current_settings, document_id, tracking_only=False):
     try:
         progress = get_document_progress(current_settings, document_id)
     except PipelineProcessingError as exc:
@@ -178,7 +232,7 @@ def render_live_progress(current_settings, document_id):
     )
     if progress.lease_expires_at:
         st.caption("Worker lease expires at {} UTC.".format(progress.lease_expires_at.isoformat()))
-        if progress.job_status == "running" and progress.lease_expires_at <= datetime.now(timezone.utc):
+        if not tracking_only and progress.job_status == "running" and progress.lease_expires_at <= datetime.now(timezone.utc):
             st.warning(
                 "The worker lease expired. If no other worker is running, resume the saved job here."
             )
@@ -220,7 +274,31 @@ def render_live_progress(current_settings, document_id):
             progress.invalid_candidate_count,
         )
     )
-    if progress.job_status in ("running", "queued", "retry_wait"):
+    if tracking_only and progress.job_status == "completed":
+        import psycopg
+        from cis_fin.postgres import secure_postgres_dsn
+
+        try:
+            with psycopg.connect(
+                secure_postgres_dsn(current_settings.database_url), connect_timeout=5
+            ) as connection:
+                total, reviewed, scored_questions = connection.execute(
+                    """SELECT count(*),
+                              count(*) FILTER (WHERE e.ai_confidence IS NOT NULL OR e.ai_score IS NOT NULL),
+                              count(DISTINCT e.question_id) FILTER (WHERE e.ai_score IS NOT NULL)
+                       FROM healthcare_custom_question_evidence e
+                       JOIN chunks ch USING (chunk_id)
+                       WHERE ch.company_id = (SELECT company_id FROM documents WHERE document_id = %s)""",
+                    (document_id,),
+                ).fetchone()
+            if total:
+                st.progress(reviewed / total, text=f"Healthcare evidence reviewed: {reviewed}/{total} retrieved passages")
+                st.caption(f"{scored_questions}/46 questions with a saved score.")
+            else:
+                st.caption("No Healthcare evidence candidates have been saved yet.")
+        except psycopg.Error:
+            st.warning("Healthcare scoring progress is currently unavailable.")
+    if not tracking_only and progress.job_status in ("running", "queued", "retry_wait"):
         if st.button("Stop this job", key="stop_job_" + str(progress.job_id)):
             try:
                 cancel_document_job(current_settings, progress.job_id)
@@ -873,22 +951,7 @@ if submitted:
                 ):
                     pipeline_result = run_pipeline_with_ui_progress(settings, result.job_id, progress)
                 if industry.strip().lower() in ("healthcare", "pharmaceuticals") and (pipeline_result is not None or not result.duplicate):
-                    with st.status("Running Healthcare 46-question evidence scoring…", expanded=True) as healthcare_status:
-                        scoring_command = [
-                            sys.executable,
-                            str(Path(__file__).resolve().parent / "scripts" / "score_healthcare_company.py"),
-                            "--company-id",
-                            str(company_id),
-                        ]
-                        scoring_environment = dict(os.environ)
-                        scoring_environment["PYTHONPATH"] = str(Path(__file__).resolve().parent / "src")
-                        scoring = subprocess.run(scoring_command, cwd=str(Path(__file__).resolve().parent), env=scoring_environment, capture_output=True, text=True)
-                        if scoring.returncode != 0:
-                            healthcare_status.update(label="Healthcare scoring failed", state="error")
-                            st.error(scoring.stderr[-2000:] or "Healthcare scoring failed without an error message.")
-                        else:
-                            healthcare_status.update(label="Healthcare 46-question scoring complete", state="complete")
-                            st.success("Healthcare evidence was retrieved and scored specifically for this company.")
+                    run_healthcare_scoring_with_ui_progress(company_id)
             if result.duplicate:
                 progress.update(label="Existing document processing checked", state="complete")
                 if pipeline_result is None:
@@ -931,6 +994,16 @@ if submitted:
         ) as exc:
             progress.update(label="Ingestion did not complete", state="error")
             st.error(str(exc))
+
+tracked_document = st.query_params.get("track_document")
+if tracked_document:
+    st.subheader("Saved job progress")
+    try:
+        tracked_document_id = uuid.UUID(tracked_document)
+    except ValueError:
+        st.error("The tracking link contains an invalid document ID.")
+    else:
+        render_live_progress(settings, tracked_document_id, tracking_only=True)
 
 last_document_id = st.session_state.get("last_ingested_document_id")
 
