@@ -6,7 +6,7 @@ import socket
 import subprocess
 import sys
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Protocol, Sequence, Tuple
@@ -158,7 +158,8 @@ class PostgresIngestionStore:
                     if not inserted:
                         cursor.execute(
                             """
-                            SELECT document_id, object_storage_key, processing_status
+                            SELECT document_id, object_storage_key, processing_status,
+                                   extracted_page_count, selected_page_start, selected_page_end
                             FROM documents
                             WHERE company_id = %s AND checksum = %s
                             """,
@@ -168,24 +169,39 @@ class PostgresIngestionStore:
                         if not existing:
                             raise IngestionError("Document conflict occurred, but the existing record could not be read.")
                         cursor.execute(
-                            """
-                            SELECT job_id, stage, status
-                            FROM processing_jobs
-                            WHERE document_id = %s
-                            ORDER BY updated_at DESC
-                            LIMIT 1
-                            """,
+                            """SELECT job_id, stage, status FROM processing_jobs
+                               WHERE document_id=%s ORDER BY updated_at DESC LIMIT 1""",
                             (existing[0],),
                         )
                         job = cursor.fetchone()
+                        requested_end = request.page_end or existing[5] or 0
+                        requested_start = request.page_start or existing[4] or 1
+                        incomplete_extraction = (
+                            existing[3] is None
+                            or int(existing[3]) < max(1, requested_end - requested_start + 1)
+                        )
+                        if incomplete_extraction:
+                            cursor.execute(
+                                """UPDATE documents SET processing_status='queued', extraction_status='pending', updated_at=now() WHERE document_id=%s""",
+                                (existing[0],),
+                            )
+                            cursor.execute(
+                                """UPDATE processing_jobs SET status='queued', stage='registered', attempt_count=0, next_attempt_at=NULL, error_code=NULL, error_message=NULL, lease_owner=NULL, lease_expires_at=NULL, updated_at=now() WHERE document_id=%s""",
+                                (existing[0],),
+                            )
+                            existing_status = 'queued'
+                            existing_stage = 'registered'
+                        else:
+                            existing_status = job[2] if job else existing[2]
+                            existing_stage = job[1] if job else None
                         return Registration(
                             document_id=existing[0],
                             job_id=job[0] if job else job_id,
                             object_key=existing[1],
                             checksum=checksum,
                             duplicate=True,
-                            existing_status=job[2] if job else existing[2],
-                            existing_stage=job[1] if job else None,
+                            existing_status=existing_status,
+                            existing_stage=existing_stage,
                         )
                     cursor.execute(
                         """
@@ -768,6 +784,38 @@ def run_extraction_job(
         if batch:
             store.store_chunks(job_id, batch)
             total_chunks += len(batch)
+        expected_pages = page_end - page_start + 1
+        if extracted_pages < expected_pages and request.engine != "pymupdf":
+            # Some Docling failures return successfully after only the first
+            # page. Re-read the requested range with the reliable local
+            # parser; existing chunk indexes remain idempotent.
+            fallback_pages = stream_pdf_pages(
+                request.path,
+                "pymupdf",
+                page_start=page_start,
+                page_end=page_end,
+            )
+            fallback_batch = []
+            fallback_page_count = 0
+            for fallback_chunk in iter_chunks(
+                fallback_pages,
+                registration.checksum,
+                target_tokens=500,
+                overlap_tokens=50,
+                document_scope=str(registration.document_id),
+            ):
+                fallback_page_count = max(fallback_page_count, fallback_chunk.page_end - page_start + 1)
+                fallback_batch.append(fallback_chunk)
+                if len(fallback_batch) >= batch_size:
+                    store.store_chunks(job_id, fallback_batch)
+                    total_chunks += len(fallback_batch)
+                    fallback_batch = []
+            if fallback_batch:
+                store.store_chunks(job_id, fallback_batch)
+                total_chunks += len(fallback_batch)
+            if fallback_page_count > extracted_pages:
+                extracted_pages = fallback_page_count
+                request = replace(request, engine="pymupdf")
         if nonempty_chars == 0 or total_chunks == 0:
             raise ExtractionError(
                 "No selectable PDF text was extracted; scanned PDFs need an OCR-capable engine."

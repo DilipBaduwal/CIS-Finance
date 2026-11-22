@@ -857,7 +857,7 @@ if submitted:
                     )
                 if (
                     result.duplicate
-                    and result.existing_status in ("failed", "retry_wait", "cancelled")
+                    and result.existing_status in ("queued", "failed", "retry_wait", "cancelled")
                     and result.existing_stage in ("registered", "stored", "extracted")
                 ):
                     result = resume_extraction_job(
