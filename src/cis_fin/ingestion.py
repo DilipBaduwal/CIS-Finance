@@ -185,6 +185,31 @@ class PostgresIngestionStore:
                             or int(existing[3]) < max(1, requested_end - requested_start + 1)
                         )
                         if incomplete_extraction:
+                            # A failed/partial extraction may have persisted a
+                            # prefix with a parser-specific chunk hash.  That
+                            # prefix cannot be compared against a recovered
+                            # parser result.  Remove only chunks with no
+                            # downstream research dependencies; completed or
+                            # reviewed evidence remains protected by FK rules.
+                            cursor.execute(
+                                """
+                                DELETE FROM chunks ch
+                                WHERE ch.document_id = %s
+                                  AND NOT EXISTS (
+                                      SELECT 1 FROM chunk_question_evidence e
+                                      WHERE e.chunk_id = ch.chunk_id
+                                  )
+                                  AND NOT EXISTS (
+                                      SELECT 1 FROM question_generation_checkpoints qgc
+                                      WHERE qgc.chunk_id = ch.chunk_id
+                                  )
+                                  AND NOT EXISTS (
+                                      SELECT 1 FROM embedding_registry er
+                                      WHERE er.chunk_id = ch.chunk_id
+                                  )
+                                """,
+                                (existing[0],),
+                            )
                             cursor.execute(
                                 """UPDATE documents SET processing_status='queued', extraction_status='pending', updated_at=now() WHERE document_id=%s""",
                                 (existing[0],),
