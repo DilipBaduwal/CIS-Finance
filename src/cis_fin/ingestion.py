@@ -801,6 +801,17 @@ def run_extraction_job(
                 "Extraction engine differs from the registered job. Resume with the original engine; "
                 "engine-change reprocessing requires a separate reviewed operation."
             )
+            # Always clean a partial extraction before retrying it. This is
+            # intentionally done here, not only during duplicate registration,
+            # because retry_wait/resume jobs can enter this function directly.
+            # Without this, a parser-version change compares a stale chunk 0
+            # against the rebuilt chunk and fails forever.
+            if checkpoint.get("extracted_page_count") is not None:
+                selected_start = int(checkpoint.get("selected_page_start") or request.page_start or 1)
+                selected_end = int(checkpoint.get("selected_page_end") or request.page_end or selected_start)
+                extracted_count = int(checkpoint.get("extracted_page_count") or 0)
+                if extracted_count < max(1, selected_end - selected_start + 1):
+                    store.clear_incomplete_chunks(registration.document_id)
         object_store.ensure_pdf(request.path, registration.object_key, registration.checksum)
         store.mark_stored(job_id, registration.object_key)
 
