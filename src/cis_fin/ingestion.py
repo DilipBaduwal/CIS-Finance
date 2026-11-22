@@ -189,11 +189,19 @@ class PostgresIngestionStore:
                         )
                         if incomplete_extraction:
                             if job and job[2] == 'cancelled':
-                                return Registration(
-                                    document_id=existing[0], job_id=job[0], object_key=existing[1],
-                                    checksum=checksum, duplicate=True,
-                                    existing_status='cancelled', existing_stage=job[1],
+                                cursor.execute(
+                                    """UPDATE documents SET processing_status='queued', extraction_status='pending',
+                                       updated_at=now() WHERE document_id=%s""", (existing[0],)
                                 )
+                                cursor.execute(
+                                    """UPDATE processing_jobs SET status='queued', stage='registered', attempt_count=0,
+                                       next_attempt_at=NULL, error_code=NULL, error_message=NULL,
+                                       lease_owner=NULL, lease_expires_at=NULL, completed_at=NULL, updated_at=now()
+                                       WHERE job_id=%s""", (job[0],)
+                                )
+                                existing_status, existing_stage = 'queued', 'registered'
+                            else:
+                                existing_status, existing_stage = None, None
                             # A failed/partial extraction may have persisted a
                             # prefix with a parser-specific chunk hash.  That
                             # prefix cannot be compared against a recovered

@@ -159,6 +159,11 @@ class PipelineJobStore:
     def cancel(self, job_id: uuid.UUID) -> None:
         with self.store._connect() as connection:
             with connection.cursor() as cursor:
+                cursor.execute("SELECT document_id FROM processing_jobs WHERE job_id = %s FOR UPDATE", (job_id,))
+                job_row = cursor.fetchone()
+                if not job_row:
+                    raise PipelineProcessingError("Processing job does not exist.")
+                document_id = job_row[0]
                 cursor.execute(
                     """
                     UPDATE processing_jobs
@@ -170,12 +175,30 @@ class PipelineJobStore:
                 )
                 if cursor.rowcount != 1:
                     raise PipelineProcessingError("Job is already complete or cannot be stopped.")
+                # Stop means discard this document's derived processing work.
+                # Keep the document/job row as an audit marker, but remove all
+                # rebuildable artifacts so the next upload starts cleanly.
+                cursor.execute("""
+                    DELETE FROM chunk_question_evidence
+                    WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE document_id = %s)
+                """, (document_id,))
+                cursor.execute("""
+                    DELETE FROM question_generation_checkpoints
+                    WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE document_id = %s)
+                """, (document_id,))
+                cursor.execute("""
+                    DELETE FROM embedding_registry
+                    WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE document_id = %s)
+                """, (document_id,))
+                cursor.execute("DELETE FROM chunk_ai_scores WHERE document_id = %s", (document_id,))
+                cursor.execute("""
+                    DELETE FROM chunk_ai_relevance
+                    WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE document_id = %s)
+                """, (document_id,))
+                cursor.execute("DELETE FROM chunks WHERE document_id = %s", (document_id,))
                 cursor.execute(
-                    """
-                    UPDATE documents SET processing_status = 'failed', updated_at = now()
-                    WHERE document_id = (SELECT document_id FROM processing_jobs WHERE job_id = %s)
-                    """,
-                    (job_id,),
+                    "UPDATE documents SET processing_status = 'failed', extraction_status = 'failed', updated_at = now() WHERE document_id = %s",
+                    (document_id,),
                 )
 
 
