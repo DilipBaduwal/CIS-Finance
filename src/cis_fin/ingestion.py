@@ -209,9 +209,10 @@ class PostgresIngestionStore:
                     cursor.execute(
                         """
                         INSERT INTO processing_jobs (
-                            job_id, document_id, researcher_id, stage, status, max_attempts, checkpoint
+                            job_id, document_id, researcher_id, stage, status,
+                            attempt_count, max_attempts, checkpoint
                         )
-                        VALUES (%s, %s, %s, 'registered', 'queued', 5, %s)
+                        VALUES (%s, %s, %s, 'registered', 'queued', 0, 5, %s)
                         """,
                         (
                             job_id,
