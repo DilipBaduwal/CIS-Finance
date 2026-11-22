@@ -189,7 +189,12 @@ class PostgresIngestionStore:
                                 (existing[0],),
                             )
                             cursor.execute(
-                                """UPDATE processing_jobs SET status='queued', stage='registered', attempt_count=0, next_attempt_at=NULL, error_code=NULL, error_message=NULL, lease_owner=NULL, lease_expires_at=NULL, updated_at=now() WHERE document_id=%s""",
+                                """UPDATE processing_jobs
+                                   SET status='queued', stage='registered', attempt_count=0,
+                                       next_attempt_at=NULL, error_code=NULL, error_message=NULL,
+                                       lease_owner=NULL, lease_expires_at=NULL, completed_at=NULL,
+                                       updated_at=now()
+                                   WHERE document_id=%s""",
                                 (existing[0],),
                             )
                             existing_status = 'queued'
