@@ -184,12 +184,6 @@ class PipelineJobStore:
                     WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE document_id = %s)
                 """, (document_id,))
                 cursor.execute("""
-                    DELETE FROM questions q
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM chunk_question_evidence e WHERE e.question_id = q.question_id
-                    )
-                """)
-                cursor.execute("""
                     DELETE FROM question_generation_checkpoints
                     WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE document_id = %s)
                 """, (document_id,))
