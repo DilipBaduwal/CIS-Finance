@@ -41,7 +41,10 @@ class Settings:
             value = values.get(name, "").strip()
             return value or None
 
-        concurrency = configured("CIS_FIN_MAX_CONCURRENT_INGESTIONS") or "2"
+        # Ingestion is intentionally serialized: one PDF job at a time avoids
+        # competing Docling/Ollama workloads and makes GPU/resource failures
+        # recoverable and observable.
+        concurrency = configured("CIS_FIN_MAX_CONCURRENT_INGESTIONS") or "1"
         try:
             max_concurrent_ingestions = int(concurrency)
         except ValueError as exc:
