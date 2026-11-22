@@ -40,6 +40,9 @@ class DocumentProgress:
     indexed_chunk_count: int
     document_status: str
     lease_expires_at: Optional[object]
+    error_code: Optional[str]
+    error_message: Optional[str]
+    checkpoint: dict
 
 
 class PipelineJobStore:
@@ -416,7 +419,7 @@ def get_document_progress(settings: Settings, document_id: uuid.UUID) -> Documen
                 cursor.execute(
                     """
                     SELECT j.job_id, j.status, j.stage, j.attempt_count, j.max_attempts, d.processing_status,
-                        j.lease_expires_at,
+                        j.lease_expires_at, j.error_code, j.error_message, j.checkpoint,
                         (SELECT count(*) FROM chunks ch WHERE ch.document_id = d.document_id),
                         (SELECT count(*) FROM question_generation_checkpoints cp
                          JOIN chunks ch ON ch.chunk_id = cp.chunk_id
@@ -460,11 +463,14 @@ def get_document_progress(settings: Settings, document_id: uuid.UUID) -> Documen
                     max_attempts=row[4],
                     document_status=row[5],
                     lease_expires_at=row[6],
-                    chunk_count=row[7],
-                    question_checkpoints=row[8],
-                    candidate_count=row[9],
-                    invalid_candidate_count=row[10],
-                    indexed_chunk_count=row[11],
+                    error_code=row[7],
+                    error_message=row[8],
+                    checkpoint=row[9] or {},
+                    chunk_count=row[10],
+                    question_checkpoints=row[11],
+                    candidate_count=row[12],
+                    invalid_candidate_count=row[13],
+                    indexed_chunk_count=row[14],
                 )
     except PipelineProcessingError:
         raise

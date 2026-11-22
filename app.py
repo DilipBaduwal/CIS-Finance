@@ -230,6 +230,13 @@ def render_live_progress(current_settings, document_id, tracking_only=False):
             progress.max_attempts,
         )
     )
+    if progress.error_message:
+        with st.expander("Failure diagnostics", expanded=True):
+            st.error(progress.error_message)
+            st.caption("Error code: {} · failing stage: {}".format(progress.error_code or "unknown", progress.stage))
+            st.caption("This is the saved database error for this job; it is not a generic client-side message.")
+            if progress.checkpoint:
+                st.json(progress.checkpoint)
     if progress.lease_expires_at:
         st.caption("Worker lease expires at {} UTC.".format(progress.lease_expires_at.isoformat()))
         if not tracking_only and progress.job_status == "running" and progress.lease_expires_at <= datetime.now(timezone.utc):
