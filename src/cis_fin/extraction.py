@@ -229,6 +229,48 @@ def stream_pdf_pages(
     last = page_end or total_pages
     if first < 1 or last < first or last > total_pages:
         raise ExtractionError("Page range must be between 1 and {}.".format(total_pages))
+    # Docling is a document-level converter.  Do not expose its generator
+    # directly: it can yield a partial document and then fail, which used to
+    # make ingestion persist only the first page/chunk.  Materialise and
+    # validate the requested range before returning anything to ingestion.
+    if engine == "docling":
+        try:
+            pages = list(EXTRACTORS[engine]().extract_pages(path, first, last))
+            page_numbers = {page.page_number for page in pages if page.text.strip()}
+            expected = set(range(first, last + 1))
+            if pages and page_numbers == expected:
+                yield from pages
+                return
+            # A report may contain an empty page, but a partial Docling result
+            # is never safe to persist.  Use the local text parser to recover
+            # the complete selected range.
+            if pages and page_numbers and page_numbers == expected.intersection(page_numbers):
+                pass
+            raise ExtractionError(
+                "Docling returned {}/{} selected pages; recovery is required.".format(
+                    len(page_numbers), len(expected)
+                )
+            )
+        except Exception as exc:
+            try:
+                fallback = list(EXTRACTORS["pymupdf"]().extract_pages(path, first, last))
+            except Exception:
+                if isinstance(exc, ExtractionError):
+                    raise
+                raise ExtractionError(
+                    "Docling extraction failed ({}), and PyMuPDF recovery also failed.".format(
+                        type(exc).__name__
+                    )
+                ) from exc
+            fallback_numbers = {page.page_number for page in fallback}
+            if fallback_numbers != set(range(first, last + 1)):
+                raise ExtractionError(
+                    "PDF recovery returned {}/{} selected pages.".format(
+                        len(fallback_numbers), last - first + 1
+                    )
+                )
+            yield from fallback
+            return
     yield from EXTRACTORS[engine]().extract_pages(path, first, last)
 
 
