@@ -123,6 +123,9 @@ class PostgresIngestionStore:
             ) from exc
 
     def register(self, request: DocumentRequest, checksum: str, file_size: int) -> Registration:
+        source_classification = str(request.source_classification or "public_source").strip().lower()
+        if source_classification not in ("public_source", "confidential_research"):
+            raise IngestionError("Invalid source classification; choose public_source or confidential_research.")
         document_id = uuid.uuid5(DOCUMENT_NAMESPACE, "{}:{}".format(request.company_id, checksum))
         object_key = "source-documents/{}/{}.pdf".format(request.company_id, checksum)
         job_id = uuid.uuid5(JOB_NAMESPACE, str(document_id))
@@ -147,7 +150,7 @@ class PostgresIngestionStore:
                             request.document_type,
                             request.fiscal_year,
                             request.source_url,
-                            request.source_classification,
+                            source_classification,
                             object_key,
                             checksum,
                             file_size,
@@ -240,7 +243,7 @@ class PostgresIngestionStore:
                                 {
                                     "job_id": str(job_id),
                                     "checksum": checksum,
-                                    "source_classification": request.source_classification,
+                                    "source_classification": source_classification,
                                 }
                             ),
                         ),
@@ -249,13 +252,13 @@ class PostgresIngestionStore:
         except IngestionError:
             raise
         except self.psycopg.Error as exc:
+            constraint = getattr(getattr(exc, "diag", None), "constraint_name", None)
             sqlstate = getattr(exc, "sqlstate", None)
             if sqlstate == "23503":
                 raise IngestionError("Company or researcher ID was not found. Check the assigned UUID with the owner.") from exc
+            detail = "; constraint: {}".format(constraint) if constraint else ""
             raise IngestionError(
-                "PostgreSQL rejected document registration ({}). Verify migrations and write permissions.".format(
-                    type(exc).__name__
-                )
+                "PostgreSQL rejected document registration ({}{})".format(type(exc).__name__, detail)
             ) from exc
 
     def claim(self, job_id: uuid.UUID, owner: str) -> Dict[str, object]:
