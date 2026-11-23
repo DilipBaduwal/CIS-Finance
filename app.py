@@ -965,8 +965,6 @@ if submitted:
                     and result.existing_status in ("queued", "retry_wait")
                 ):
                     pipeline_result = run_pipeline_with_ui_progress(settings, result.job_id, progress)
-                if industry.strip().lower() in ("healthcare", "pharmaceuticals") and (pipeline_result is not None or not result.duplicate):
-                    run_healthcare_scoring_with_ui_progress(company_id)
             if result.duplicate:
                 progress.update(label="Existing document processing checked", state="complete")
                 if pipeline_result is None:
