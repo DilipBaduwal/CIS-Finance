@@ -67,10 +67,6 @@ class PipelineJobStore:
                     if not row:
                         raise PipelineProcessingError("Processing job {} does not exist.".format(job_id))
                     document_id, status, stage, attempts, maximum, next_at, lease_until = row
-                    if stage not in ("chunked", "questions", "embedded", "indexed"):
-                        raise PipelineProcessingError(
-                            "Job stage is '{}'; post-extraction processing requires a saved chunk checkpoint.".format(stage)
-                        )
                     if status == "completed":
                         raise PipelineProcessingError("This processing job is already complete.")
                     if status == "failed" or attempts >= maximum:
@@ -175,32 +171,19 @@ class PipelineJobStore:
                 )
                 if cursor.rowcount != 1:
                     raise PipelineProcessingError("Job is already complete or cannot be stopped.")
-                # Stop means discard this document's derived processing work.
-                # Keep the document/job row as an audit marker, but remove all
-                # rebuildable artifacts so the next upload starts cleanly.
-                cursor.execute("DELETE FROM audit_events WHERE entity_id IN (%s, %s)", (document_id, job_id))
-                cursor.execute("""
-                    DELETE FROM chunk_question_evidence
-                    WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE document_id = %s)
-                """, (document_id,))
-                cursor.execute("""
-                    DELETE FROM question_generation_checkpoints
-                    WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE document_id = %s)
-                """, (document_id,))
-                cursor.execute("""
-                    DELETE FROM embedding_registry
-                    WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE document_id = %s)
-                """, (document_id,))
-                cursor.execute("DELETE FROM chunk_ai_scores WHERE document_id = %s", (document_id,))
-                cursor.execute("""
-                    DELETE FROM chunk_ai_relevance
-                    WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE document_id = %s)
-                """, (document_id,))
-                cursor.execute("DELETE FROM chunks WHERE document_id = %s", (document_id,))
-                # Hard-delete both records. A subsequent upload of the same
-                # checksum must register as a brand-new document/job.
-                cursor.execute("DELETE FROM processing_jobs WHERE job_id = %s", (job_id,))
-                cursor.execute("DELETE FROM documents WHERE document_id = %s", (document_id,))
+                cursor.execute("UPDATE documents SET processing_status = 'queued', updated_at = now() WHERE document_id = %s", (document_id,))
+
+    def resume_paused(self, job_id: uuid.UUID) -> uuid.UUID:
+        with self.store._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("""UPDATE processing_jobs SET status='queued', next_attempt_at=NULL,
+                    lease_owner=NULL, lease_expires_at=NULL, error_code=NULL, error_message=NULL, updated_at=now()
+                    WHERE job_id=%s AND status='cancelled' RETURNING document_id""", (job_id,))
+                row = cursor.fetchone()
+                if not row:
+                    raise PipelineProcessingError("This job is not paused or no longer exists.")
+                cursor.execute("UPDATE documents SET processing_status='queued', updated_at=now() WHERE document_id=%s", (row[0],))
+                return row[0]
 
 
     def checkpoint(self, job_id: uuid.UUID, stage: str) -> None:
@@ -653,3 +636,8 @@ def process_document_pipeline(
 def cancel_document_job(settings: Settings, job_id: uuid.UUID) -> None:
     """Request cancellation and release the lease immediately."""
     PipelineJobStore(settings).cancel(job_id)
+
+
+def resume_paused_document_job(settings: Settings, job_id: uuid.UUID) -> uuid.UUID:
+    """Resume a job paused by the researcher."""
+    return PipelineJobStore(settings).resume_paused(job_id)

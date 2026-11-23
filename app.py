@@ -78,6 +78,7 @@ from cis_fin.pipeline import (
     process_document_pipeline,
     retry_failed_document_job,
     reset_zero_candidate_job,
+    resume_paused_document_job,
 )
 from cis_fin.auth import authenticate, configured_users
 from cis_fin.question_review import QuestionReviewError, edit_question_candidate
@@ -354,6 +355,13 @@ def render_live_progress(current_settings, document_id, tracking_only=False):
                 st.rerun()
             except PipelineProcessingError as exc:
                 st.error("Could not retry failed job: {}".format(exc))
+    elif progress.job_status == "cancelled":
+        if st.button("Start paused job", key="start_paused_job_" + str(progress.job_id)):
+            try:
+                resume_paused_document_job(current_settings, progress.job_id)
+                st.rerun()
+            except PipelineProcessingError as exc:
+                st.error("Could not start paused job: {}".format(exc))
     elif progress.job_status == "running" and (
         not progress.lease_expires_at or progress.lease_expires_at > datetime.now(timezone.utc)
     ):

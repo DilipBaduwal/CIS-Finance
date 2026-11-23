@@ -41,7 +41,7 @@ class Settings:
             value = values.get(name, "").strip()
             return value or None
 
-        concurrency = configured("CIS_FIN_MAX_CONCURRENT_INGESTIONS") or "2"
+        concurrency = configured("CIS_FIN_MAX_CONCURRENT_INGESTIONS") or "1"
         try:
             max_concurrent_ingestions = int(concurrency)
         except ValueError as exc:
