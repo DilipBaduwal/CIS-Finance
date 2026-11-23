@@ -13,6 +13,10 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Researcher ingestion and local inference are intentionally CPU-only. This
+# prevents Docling/Ollama workloads from competing for the small workstation GPU.
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
+
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 import streamlit as st
